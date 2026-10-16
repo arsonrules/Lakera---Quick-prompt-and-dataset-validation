@@ -442,14 +442,22 @@ function showPicker(box, title, splits, onAdd) {
     label.replaceChildren(...selectOf([["", "(none)"], ["=malicious", "Whole dataset is malicious"], ["=benign", "Whole dataset is benign"],
       ...(sp.all_columns || []).map(x => [x, "Column: " + x])]).children);
     label.value = sp.label_guess || "";
+    const tooBig = sp.num_rows > 5000; // same limit the backend enforces for "All rows"
+    all.disabled = tooBig; if (tooBig) all.checked = false;
+    allLab.title = tooBig ? `${sp.num_rows.toLocaleString()} rows: over the 5,000 limit for All rows` : `Take all ${sp.num_rows.toLocaleString()} rows`;
+    n.disabled = all.checked;
   };
+  // "All rows": every row of this split instead of a random N
+  const all = el("input"); all.type = "checkbox";
+  const allLab = el("label", "allrows"); allLab.append(all, " All rows");
+  all.addEventListener("change", () => { n.disabled = all.checked; });
   split.addEventListener("change", fillCols); fillCols();
   const add = el("button", "primary", "Add"); add.type = "button";
-  add.addEventListener("click", () => { onAdd(splits[+split.value], col.value, Math.max(1, Math.min(5000, +n.value || 1)), label.value || null); box.hidden = true; });
+  add.addEventListener("click", () => { onAdd(splits[+split.value], col.value, Math.max(1, Math.min(5000, +n.value || 1)), label.value || null, all.checked); box.hidden = true; });
   if (splits.length > 1 || splits[0].split) row.append(labeled("Config / split", split));
   row.append(labeled("Text column", col));
   if (splits[0].all_columns) row.append(labeled("Label (optional)", label));
-  row.append(labeled("N (random)", n), add);
+  row.append(labeled("N (random)", n), allLab, add);
   box.append(row);
 }
 
@@ -492,8 +500,8 @@ async function pickHF(id) {
   try {
     const splits = await getJSON("/api/hf/info?dataset=" + encodeURIComponent(id));
     if (!splits.length) throw new Error("No viewable splits (dataset viewer disabled?)");
-    showPicker(box, id, splits, (s, column, n, label) =>
-      addSource({ type: "hf", name: id, config: s.config, split: s.split, column, n, label, num_rows: s.num_rows }));
+    showPicker(box, id, splits, (s, column, n, label, all) =>
+      addSource({ type: "hf", name: id, config: s.config, split: s.split, column, n, label, all, num_rows: s.num_rows }));
   } catch (err) { box.replaceChildren(el("span", "err", `${id}: ${err.message}`)); }
 }
 
@@ -508,7 +516,7 @@ async function upload() {
     showPicker(box, `${f.name} — ${r.num_rows.toLocaleString()} ${agent ? "agent scenarios" : "rows"}`,
       [{ config: "", split: "", num_rows: r.num_rows, columns: agent ? ["messages"] : r.columns,
          all_columns: agent ? null : r.columns, label_guess: r.label_guess }],
-      (_, column, n, label) => addSource({ type: agent ? "scenario" : "upload", name: f.name, column, n, label, num_rows: r.num_rows, rows: r.rows }));
+      (_, column, n, label, all) => addSource({ type: agent ? "scenario" : "upload", name: f.name, column, n, label, all, num_rows: r.num_rows, rows: r.rows }));
   } catch (err) { box.replaceChildren(el("span", "err", err.message)); }
   $("file").value = "";
 }
