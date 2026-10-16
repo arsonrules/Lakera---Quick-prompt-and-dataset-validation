@@ -227,11 +227,11 @@ PRESETS = [
 SCENARIOS = Path(__file__).with_name("scenarios") / "agent_actions.jsonl"
 
 PAGE = 100  # HF /rows max length
-ALL_MAX = 5000  # "all rows" cap per dataset (same as the N cap): beyond it, use a random N
+ALL_MAX = 500_000  # "all rows" cap per dataset; beyond it, use a random N (index.html mirrors this)
 # Dataset label -> malicious/benign. "unsafe" contains "safe", so malicious words are checked first.
 MALICIOUS_WORDS = ("jailbreak", "inject", "malicious", "attack", "harmful", "unsafe", "toxic", "adversarial")
 BENIGN_WORDS = ("benign", "safe", "normal", "clean", "legit")
-LABEL_GUESS = ("label", "labels", "type", "is_jailbreak", "jailbreak", "jailbreaking", "toxicity", "is_injection", "class")
+LABEL_GUESS = ("label", "labels", "prompt_label", "type", "is_jailbreak", "jailbreak", "jailbreaking", "toxicity", "is_injection", "class")
 
 
 def norm_label(v) -> str | None:

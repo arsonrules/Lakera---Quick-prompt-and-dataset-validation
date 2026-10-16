@@ -202,9 +202,9 @@ n0 = len(seen)
 r = c.post("/api/cases", json={"seed": 5, "sources": [dict(src, n=1, all=True)]}).json()
 assert [x["prompt"] for x in r["cases"]] == [f"row {i}" for i in range(250) if i % 50]  # 5 empty rows reported
 assert "5 of 250" in r["errors"][0] and len(seen) - n0 <= 1 + 3, "one /size + one /rows per 100-row page"
-app.ALL_MAX = 100
+real_max, app.ALL_MAX = app.ALL_MAX, 100
 r = c.post("/api/cases", json={"sources": [dict(src, n=1, all=True)]}).json()
-app.ALL_MAX = 5000
+app.ALL_MAX = real_max
 assert not r["cases"] and "250 rows" in r["errors"][0] and "limited to 100" in r["errors"][0], r
 
 # credentials are session-based: the page keeps them only in sessionStorage, never localStorage
@@ -216,6 +216,7 @@ creds = {"key", "judgeKey", "hfToken"}
 assert creds <= session and not creds & persistent, (session, persistent)
 assert all(f'id="{i}" type="password" autocomplete="off"' in html for i in creds)
 assert "credentialCheck();" in html  # in-app check runs on load
+assert re.search(r"const ALL_MAX = (\d+);", html).group(1) == str(app.ALL_MAX) == "500000"  # UI and backend agree
 # ...and the backend holds no credential after a request: HF token goes upstream, not into the cache or response
 HF_SECRET = "hf_SECRETtoken123"
 n0 = len(seen)

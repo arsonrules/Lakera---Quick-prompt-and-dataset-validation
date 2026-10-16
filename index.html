@@ -86,6 +86,7 @@
   td.num, th.num { white-space: nowrap; text-align: right; font-variant-numeric: tabular-nums; }
   td input[type=number] { width: 80px; }
   td.prompt { overflow-wrap: anywhere; }
+  label.allrows:has(input:disabled) { color: var(--muted); }
   label.allrows { display: inline-flex; flex-direction: row; align-items: center; gap: 4px; margin-left: 8px; font-size: 13px; color: var(--text); }
   td.src { overflow-wrap: anywhere; font-size: 12px; color: var(--muted); min-width: 140px; max-width: 260px; }
   .presets { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 10px; }
@@ -373,6 +374,8 @@ async function testConn() {
 }
 
 // ---------- Datasets ----------
+const ALL_MAX = 500000; // "All rows" cap per dataset; must match ALL_MAX in app.py
+const BIG = 10000;      // ask before building or running more prompts than this
 const state = { sources: [], cases: [] };
 const TEXT_COLS = ["prompt", "text", "question", "input", "instruction", "user_input", "source_text"];
 const guessCol = cols => TEXT_COLS.find(c => cols.includes(c)) || cols.find(c => TEXT_COLS.includes(c.toLowerCase())) || cols[0];
@@ -404,12 +407,12 @@ function renderSources() {
     const n = el("input"); n.type = "number"; n.min = 1; n.max = 5000; n.value = s.n;
     n.setAttribute("aria-label", `N for ${s.name}`);
     n.addEventListener("change", () => { s.n = Math.max(1, Math.min(5000, +n.value || 1)); n.value = s.n; });
-    // "All": every row instead of a random N (the backend refuses datasets over 5,000 rows)
+    // "All": every row instead of a random N (the backend refuses datasets over ALL_MAX rows)
     const all = el("input"); all.type = "checkbox"; all.checked = !!s.all; n.disabled = all.checked;
     all.setAttribute("aria-label", `All rows of ${s.name}`);
     all.addEventListener("change", () => { s.all = all.checked; n.disabled = all.checked; });
     const allLab = el("label", "allrows"); allLab.append(all, " All");
-    if (s.num_rows > 5000) { all.disabled = true; allLab.title = `${s.num_rows.toLocaleString()} rows: over the 5,000 limit for All`; }
+    if (s.num_rows > ALL_MAX) { all.disabled = true; allLab.lastChild.textContent = ` All: over ${ALL_MAX.toLocaleString()} rows`; allLab.title = `${s.num_rows.toLocaleString()} rows; use a random N`; }
     const tdN = el("td", "num"); tdN.append(n, allLab);
     const rm = el("button", null, "Remove"); rm.type = "button";
     rm.addEventListener("click", () => { state.sources.splice(i, 1); renderSources(); });
@@ -442,9 +445,10 @@ function showPicker(box, title, splits, onAdd) {
     label.replaceChildren(...selectOf([["", "(none)"], ["=malicious", "Whole dataset is malicious"], ["=benign", "Whole dataset is benign"],
       ...(sp.all_columns || []).map(x => [x, "Column: " + x])]).children);
     label.value = sp.label_guess || "";
-    const tooBig = sp.num_rows > 5000; // same limit the backend enforces for "All rows"
+    const tooBig = sp.num_rows > ALL_MAX; // same limit the backend enforces for "All rows"
     all.disabled = tooBig; if (tooBig) all.checked = false;
-    allLab.title = tooBig ? `${sp.num_rows.toLocaleString()} rows: over the 5,000 limit for All rows` : `Take all ${sp.num_rows.toLocaleString()} rows`;
+    allLab.lastChild.textContent = tooBig ? ` All rows: unavailable, ${sp.num_rows.toLocaleString()} rows (limit ${ALL_MAX.toLocaleString()})` : " All rows";
+    allLab.title = tooBig ? "Use a random N, or pick a smaller split" : `Take all ${sp.num_rows.toLocaleString()} rows`;
     n.disabled = all.checked;
   };
   // "All rows": every row of this split instead of a random N
@@ -524,6 +528,11 @@ async function upload() {
 async function build() {
   if (!state.sources.length) { $("buildStatus").textContent = "Add a dataset first."; return; }
   if ($("build").disabled) return;
+  const hfRows = state.sources.filter(x => x.type === "hf").reduce((a, x) => a + (x.all ? x.num_rows || 0 : x.n), 0);
+  const total = state.sources.reduce((a, x) => a + (x.all ? x.num_rows || 0 : x.n), 0);
+  if (total > BIG && !confirm(`Build about ${total.toLocaleString()} prompts?\n\n` +
+      (hfRows ? `Hugging Face serves 100 rows per request: about ${Math.ceil(hfRows / 100).toLocaleString()} requests. Add an HF token or it will be rate-limited, and it can take a long time.\n\n` : "") +
+      `Running them later means ${total.toLocaleString()} Lakera calls.`)) return;
   $("build").disabled = $("buildAll").disabled = true; $("buildErrors").replaceChildren(); $("preview").hidden = true;
   $("buildStatus").textContent = "Sampling… (Hugging Face can be slow without a token)";
   try {
@@ -605,6 +614,10 @@ async function startRun() {
   const s = settings();
   if (!state.cases.length) { $("runStatus").textContent = "Build a sample in the Datasets tab first."; return; }
   if (!s.api_key) { $("key").focus(); $("runStatus").textContent = "Enter a Lakera API key first."; return; }
+  const n = state.cases.length;
+  if (n > BIG && !confirm(`Run ${n.toLocaleString()} prompts through Lakera?\n\nThat is ${n.toLocaleString()} API calls, one at a time ` +
+      `(roughly ${(n * 0.3 / 3600).toFixed(1)} hours at ~0.3 s each), and it uses your Lakera quota.` +
+      (judgeCfg() ? ` The judge model is also called ${n.toLocaleString()} times.` : ""))) return;
   runAbort = new AbortController();
   state.run = { meta: null, warmup: null, records: [], done: null };
   $("runRows").replaceChildren(); $("runStart").disabled = true; $("runCancel").disabled = false;
@@ -706,7 +719,7 @@ async function init() {
   $("file").addEventListener("change", upload);
   $("build").addEventListener("click", build);
   $("buildAll").addEventListener("click", () => {
-    for (const s of state.sources) if (!(s.num_rows > 5000)) s.all = true;
+    for (const s of state.sources) if (!(s.num_rows > ALL_MAX)) s.all = true;
     renderSources(); build();
   });
   renderSources();

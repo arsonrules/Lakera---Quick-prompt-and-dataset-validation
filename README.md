@@ -31,7 +31,7 @@ docker run --rm -p 127.0.0.1:8765:8765 lakera-guard-tester
    - an uploaded `.csv` / `.json` / `.jsonl` / `.txt` file.
 
    Set **N** for each dataset and a **seed**. The random sampling is reproducible, and adding a dataset never reshuffles the others.
-   To use every row instead, tick **All rows** in the Hugging Face search or upload picker, tick **All** on a selected dataset, or click **Load all rows** to do it for every selected dataset and build in one step. "All" is limited to 5,000 rows per dataset; larger datasets (e.g. SQuAD at 130k) are refused with a message. Loading a whole HF dataset makes one request per 100 rows, so add an HF token for anything beyond a few hundred rows.
+   To use every row instead, tick **All rows** in the Hugging Face search or upload picker, tick **All** on a selected dataset, or click **Load all rows** to do it for every selected dataset and build in one step. "All" is limited to 500,000 rows per dataset; larger datasets are refused with a message. Hugging Face serves 100 rows per request, so a large split means thousands of requests (451k rows ≈ 4,500): add an HF token, and expect it to take a while. Builds and runs over 10,000 prompts ask for confirmation first, since a run makes one Lakera call per prompt (100k prompts ≈ 8 hours at ~0.3 s each) and uses your quota.
 
    After **Build sample** you can download it:
    - **.jsonl** keeps every field, including labels and agent scenarios' messages and tools. Uploading it again rebuilds the same sample with no Hugging Face calls; set N ≥ the row count to keep every row.
