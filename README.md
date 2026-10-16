@@ -31,6 +31,7 @@ docker run --rm -p 127.0.0.1:8765:8765 lakera-guard-tester
    - an uploaded `.csv` / `.json` / `.jsonl` / `.txt` file.
 
    Set **N** for each dataset and a **seed**. The random sampling is reproducible, and adding a dataset never reshuffles the others.
+   To use every row instead, tick **All** on a dataset, or click **Load all rows** to do it for every selected dataset and build in one step. "All" is limited to 5,000 rows per dataset; larger datasets (e.g. SQuAD at 130k) are refused with a message. Loading a whole HF dataset makes one request per 100 rows, so add an HF token for anything beyond a few hundred rows.
 
    After **Build sample** you can download it:
    - **.jsonl** keeps every field, including labels and agent scenarios' messages and tools. Uploading it again rebuilds the same sample with no Hugging Face calls; set N ≥ the row count to keep every row.

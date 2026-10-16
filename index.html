@@ -86,6 +86,7 @@
   td.num, th.num { white-space: nowrap; text-align: right; font-variant-numeric: tabular-nums; }
   td input[type=number] { width: 80px; }
   td.prompt { overflow-wrap: anywhere; }
+  label.allrows { display: inline-flex; flex-direction: row; align-items: center; gap: 4px; margin-left: 8px; font-size: 13px; color: var(--text); }
   td.src { overflow-wrap: anywhere; font-size: 12px; color: var(--muted); min-width: 140px; max-width: 260px; }
   .presets { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 10px; }
   .presets fieldset { border: 1px solid var(--border); border-radius: 8px; padding: 6px 10px 10px; margin: 0; }
@@ -161,13 +162,14 @@
  <div class="wrap">
   <h2>Selected datasets</h2>
   <div class="tablewrap"><table>
-    <thead><tr><th>Dataset</th><th>Config / split</th><th>Column</th><th class="num">Rows</th><th class="num">N (random)</th><th></th></tr></thead>
+    <thead><tr><th>Dataset</th><th>Config / split</th><th>Column</th><th class="num">Rows</th><th class="num">N (random) / All</th><th></th></tr></thead>
     <tbody id="sel"></tbody>
   </table></div>
   <p id="selEmpty" class="muted">Nothing selected yet. Add datasets from the presets, Hugging Face search, or a file upload below.</p>
   <div class="row">
     <label>Seed <input id="seed" type="number" value="42" style="width:100px"></label>
     <button class="primary" id="build">Build sample</button>
+    <button id="buildAll" type="button" title="Tick All for every selected dataset, then build">Load all rows</button>
     <span id="buildStatus" class="muted" role="status"></span>
     <button id="goRun" type="button" hidden>Go to Run →</button>
     <button id="dlJsonl" type="button" hidden title="Every field; re-uploadable here">Download .jsonl</button>
@@ -402,7 +404,13 @@ function renderSources() {
     const n = el("input"); n.type = "number"; n.min = 1; n.max = 5000; n.value = s.n;
     n.setAttribute("aria-label", `N for ${s.name}`);
     n.addEventListener("change", () => { s.n = Math.max(1, Math.min(5000, +n.value || 1)); n.value = s.n; });
-    const tdN = el("td", "num"); tdN.append(n);
+    // "All": every row instead of a random N (the backend refuses datasets over 5,000 rows)
+    const all = el("input"); all.type = "checkbox"; all.checked = !!s.all; n.disabled = all.checked;
+    all.setAttribute("aria-label", `All rows of ${s.name}`);
+    all.addEventListener("change", () => { s.all = all.checked; n.disabled = all.checked; });
+    const allLab = el("label", "allrows"); allLab.append(all, " All");
+    if (s.num_rows > 5000) { all.disabled = true; allLab.title = `${s.num_rows.toLocaleString()} rows: over the 5,000 limit for All`; }
+    const tdN = el("td", "num"); tdN.append(n, allLab);
     const rm = el("button", null, "Remove"); rm.type = "button";
     rm.addEventListener("click", () => { state.sources.splice(i, 1); renderSources(); });
     const tdR = el("td"); tdR.append(rm);
@@ -507,7 +515,8 @@ async function upload() {
 
 async function build() {
   if (!state.sources.length) { $("buildStatus").textContent = "Add a dataset first."; return; }
-  $("build").disabled = true; $("buildErrors").replaceChildren(); $("preview").hidden = true;
+  if ($("build").disabled) return;
+  $("build").disabled = $("buildAll").disabled = true; $("buildErrors").replaceChildren(); $("preview").hidden = true;
   $("buildStatus").textContent = "Sampling… (Hugging Face can be slow without a token)";
   try {
     const sources = state.sources.map(({ num_rows, ...s }) => s);
@@ -526,7 +535,7 @@ async function build() {
     $("previewSum").textContent = `Preview ${Math.min(200, r.cases.length)} of ${r.cases.length} prompts`;
     $("preview").hidden = !r.cases.length;
   } catch (err) { $("buildStatus").textContent = ""; $("buildErrors").append(el("div", null, err.message)); }
-  finally { $("build").disabled = false; }
+  finally { $("build").disabled = $("buildAll").disabled = false; }
 }
 
 // ---------- Run ----------
@@ -688,6 +697,10 @@ async function init() {
   $("hfSearch").addEventListener("submit", hfSearch);
   $("file").addEventListener("change", upload);
   $("build").addEventListener("click", build);
+  $("buildAll").addEventListener("click", () => {
+    for (const s of state.sources) if (!(s.num_rows > 5000)) s.all = true;
+    renderSources(); build();
+  });
   renderSources();
   renderPresets().catch(err => $("presets").append(el("p", "err", err.message)));
   $("endpoint").value = store.get(ls, "endpoint") || "community";

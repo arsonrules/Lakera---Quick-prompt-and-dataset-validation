@@ -192,6 +192,21 @@ evs = [json.loads(x) for x in c.post("/api/run", json={"api_key": "good", "cases
 assert evs[2]["case"]["label"] == r["cases"][0]["label"] and evs[2]["case"]["label_raw"].startswith("label = ")
 assert any(p.get("label") == "label" for p in app.PRESETS) and any(p.get("label") == "=benign" for p in app.PRESETS)
 
+# "All rows": every row of uploads, scenarios and HF splits; HF over ALL_MAX is refused, not silently cut
+r = c.post("/api/cases", json={"sources": [{"type": "upload", "name": "u.csv", "column": "q", "n": 1, "all": True, "rows": up}]}).json()
+assert sorted(x["prompt"] for x in r["cases"]) == ["a", "b", "c"]
+r = c.post("/api/cases", json={"sources": [{"type": "scenario", "name": "agent_actions.jsonl", "column": "messages", "n": 1,
+                                            "all": True, "bundled": True}]}).json()
+assert len(r["cases"]) == 30
+n0 = len(seen)
+r = c.post("/api/cases", json={"seed": 5, "sources": [dict(src, n=1, all=True)]}).json()
+assert [x["prompt"] for x in r["cases"]] == [f"row {i}" for i in range(250) if i % 50]  # 5 empty rows reported
+assert "5 of 250" in r["errors"][0] and len(seen) - n0 <= 1 + 3, "one /size + one /rows per 100-row page"
+app.ALL_MAX = 100
+r = c.post("/api/cases", json={"sources": [dict(src, n=1, all=True)]}).json()
+app.ALL_MAX = 5000
+assert not r["cases"] and "250 rows" in r["errors"][0] and "limited to 100" in r["errors"][0], r
+
 # credentials are session-based: the page keeps them only in sessionStorage, never localStorage
 import re
 html = (Path(app.__file__).with_name("index.html")).read_text()

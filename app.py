@@ -227,6 +227,7 @@ PRESETS = [
 SCENARIOS = Path(__file__).with_name("scenarios") / "agent_actions.jsonl"
 
 PAGE = 100  # HF /rows max length
+ALL_MAX = 5000  # "all rows" cap per dataset (same as the N cap): beyond it, use a random N
 # Dataset label -> malicious/benign. "unsafe" contains "safe", so malicious words are checked first.
 MALICIOUS_WORDS = ("jailbreak", "inject", "malicious", "attack", "harmful", "unsafe", "toxic", "adversarial")
 BENIGN_WORDS = ("benign", "safe", "normal", "clean", "legit")
@@ -361,6 +362,7 @@ class Source(BaseModel):
     split: str | None = None
     column: str
     n: int = Field(ge=1, le=5000)
+    all: bool = False  # take every row instead of a random N (up to ALL_MAX)
     rows: list[dict] | None = None  # upload / uploaded scenarios
     bundled: bool = False  # scenario: use scenarios/agent_actions.jsonl
     label: str | None = None  # dataset label column, or "=malicious" / "=benign"; see label_of
@@ -392,15 +394,24 @@ def scenario_case(row: dict, name: str, i: int) -> dict:
             "messages": msgs, "tools": row.get("tools"), "expected": row["expected"], "danger": row.get("danger")}
 
 
+def take(s: Source, total: int) -> int:
+    """How many rows to sample: N, or every row when s.all (refused above ALL_MAX)."""
+    if not s.all:
+        return s.n
+    if total > ALL_MAX:
+        raise ValueError(f"has {total:,} rows; 'All rows' is limited to {ALL_MAX:,}, so use a random N instead")
+    return total
+
+
 async def build_source(s: Source, seed: int, token: str | None) -> tuple[list[dict], str | None]:
     if s.type == "scenario":
         rows = parse_upload("x.jsonl", SCENARIOS.read_text()) if s.bundled else (s.rows or [])
         cases = [scenario_case(r, s.name, i) for i, r in enumerate(rows)]  # ValueError -> source error
-        return [cases[j] for j in pick(len(cases), s.n, seed, s.name)], None
+        return [cases[j] for j in pick(len(cases), take(s, len(cases)), seed, s.name)], None
     if s.type == "upload":
         rows = [(i, r, to_text(r.get(s.column))) for i, r in enumerate(s.rows or [])]
         rows = [x for x in rows if x[2].strip()]
-        picked = [rows[j] for j in pick(len(rows), s.n, seed, s.name)]
+        picked = [rows[j] for j in pick(len(rows), take(s, len(rows)), seed, s.name)]
         # Rows that are agent scenarios (e.g. from a downloaded mixed sample) stay scenarios.
         return [scenario_case(r, s.name, i) if isinstance(r.get("messages"), list) and r.get("expected") else
                 {"id": f"upload:{s.name}#{i}", "source": f"upload:{s.name}", "prompt": t, **label_of(s.label, r)}
@@ -408,7 +419,7 @@ async def build_source(s: Source, seed: int, token: str | None) -> tuple[list[di
     key = f"{s.name}/{s.config}/{s.split}"
     size = await hf_get(f"{HF_DS}/size", {"dataset": s.name, "config": s.config}, token)
     num_rows = next((x["num_rows"] for x in size["size"]["splits"] if x["split"] == s.split), 0)
-    idxs = pick(num_rows, s.n, seed, key)
+    idxs = pick(num_rows, take(s, num_rows), seed, key)
     spans: dict[int, list[int]] = {}  # one call per 100-row page touched, only the rows needed
     for i in idxs:
         spans.setdefault(i // PAGE, []).append(i)
