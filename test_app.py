@@ -1,6 +1,10 @@
 """Self-check, no real Lakera/HF calls: .venv/bin/python test_app.py"""
+import io
 import json
 from pathlib import Path
+
+import pyarrow as pa
+import pyarrow.parquet as pq
 
 import httpx
 from fastapi.testclient import TestClient
@@ -35,8 +39,21 @@ def fake_judge(request: httpx.Request) -> httpx.Response:
     return httpx.Response(200, json={"choices": [{"message": {"content": "Sure:\n```json\n" + json.dumps(verdict) + "\n```"}}]})
 
 
+_buf = io.BytesIO()  # the same 250 rows fake_hf serves, as the split's Parquet file
+pq.write_table(pa.table({"text": [f"row {i}" if i % 50 else "" for i in range(250)], "label": [i % 2 for i in range(250)]}), _buf)
+PARQUET = _buf.getvalue()
+
+
 def fake_lakera(request: httpx.Request) -> httpx.Response:
     seen.append(request)
+    if request.url.host == "huggingface.co" and "/parquet/" in request.url.path:
+        return httpx.Response(200, json=["https://huggingface.co/files/0.parquet"])
+    if request.url.path == "/files/0.parquet":
+        return httpx.Response(200, content=PARQUET)
+    if request.url.path == "/api/whoami-v2":
+        if request.headers.get("authorization") == "Bearer hf_goodtoken123":
+            return httpx.Response(200, json={"name": "alice", "auth": {"accessToken": {"role": "read"}}})
+        return httpx.Response(401, json={"error": "Invalid credentials"})
     if request.url.host == "judge.test":
         return fake_judge(request)
     if request.url.host == "datasets-server.huggingface.co":
@@ -104,8 +121,8 @@ assert c.post("/api/cases", json={"seed": 3, "sources": [src]}).json() == r and 
 # /api/run: NDJSON stream; warm-up call first and not recorded; one call per case
 cases = [{"id": f"t#{i}", "source": "t", "prompt": f"p{i}"} for i in range(3)]
 n0 = len(seen)
-evs = [json.loads(x) for x in c.post("/api/run", json={"api_key": "good", "endpoint": "us", "cases": cases,
-                                                        "system": "sys", "threshold": 1}).text.splitlines()]  # ignored now
+evs = [json.loads(x) for x in c.post("/api/run", json={"api_key": "good", "endpoint": "us", "cases": cases, "concurrency": 1,
+                                                        "system": "sys", "threshold": 1}).text.splitlines()]  # threshold ignored now
 assert [e["type"] for e in evs] == ["start", "warmup", "case", "case", "case", "done"], evs
 assert len(seen) - n0 == 4 and b"connection test" in seen[n0].content and b"p0" in seen[n0 + 1].content
 case = evs[2]["case"]
@@ -117,6 +134,11 @@ n0 = len(seen)
 evs = [json.loads(x) for x in c.post("/api/run", json={"api_key": "bad", "cases": cases}).text.splitlines()]
 assert [e["type"] for e in evs] == ["start", "warmup", "done"] and evs[-1]["aborted"].startswith("HTTP 401") and len(seen) - n0 == 1
 assert c.post("/api/run", json={"api_key": "good", "cases": []}).status_code == 422
+# resumed segment: warmup=false -> no warm-up call or event, one call per remaining case
+n0 = len(seen)
+evs = [json.loads(x) for x in c.post("/api/run", json={"api_key": "good", "cases": cases[1:], "warmup": False}).text.splitlines()]
+assert [e["type"] for e in evs] == ["start", "case", "case", "done"] and len(seen) - n0 == 2
+assert b"connection test" not in seen[n0].content
 
 # judge: verdict parsing
 v = app.parse_verdict('x {"malicious": false, "sensitive_data": true, "category": "weird", "reason": "has email"} y')
@@ -207,6 +229,95 @@ r = c.post("/api/cases", json={"sources": [dict(src, n=1, all=True)]}).json()
 app.ALL_MAX = real_max
 assert not r["cases"] and "250 rows" in r["errors"][0] and "limited to 100" in r["errors"][0], r
 
+# local (downloaded) datasets: listing from Parquet metadata, sampling, labels, all rows, no path escape
+import tempfile
+import pyarrow as pa
+import pyarrow.parquet as pq
+real_data, app.DATA = app.DATA, Path(tempfile.mkdtemp())
+d = app.DATA / "org__set" / "default" / "train"
+d.mkdir(parents=True)
+pq.write_table(pa.table({"text": [f"t{i}" if i % 10 else "" for i in range(30)], "label": [i % 2 for i in range(30)]}), d / "0.parquet")
+pq.write_table(pa.table({"text": ["t30", "t31"], "label": [1, 0]}), d / "1.parquet")  # second shard
+listing = c.get("/api/local").json()
+assert listing == {"org/set": [{"config": "default", "split": "train", "num_rows": 32, "columns": ["text"],
+                                "all_columns": ["text", "label"], "label_guess": "label"}]}, listing
+loc = {"type": "local", "name": "org/set", "config": "default", "split": "train", "column": "text", "label": "label"}
+r = c.post("/api/cases", json={"seed": 2, "sources": [dict(loc, n=5)]}).json()
+assert len(r["cases"]) <= 5 and all(x["source"] == "local:org/set/default/train" for x in r["cases"])
+assert all(x["label"] == ("malicious" if int(x["prompt"][1:]) % 2 else "benign") for x in r["cases"])
+assert r == c.post("/api/cases", json={"seed": 2, "sources": [dict(loc, n=5)]}).json(), "seeded"
+r = c.post("/api/cases", json={"sources": [dict(loc, n=1, all=True)]}).json()
+assert sorted(int(x["prompt"][1:]) for x in r["cases"]) == [i for i in range(32) if i % 10 or i >= 30]  # empty rows skipped
+for bad in ({"name": "../../etc"}, {"split": "../../.."}, {"name": "org/nope"}):
+    r = c.post("/api/cases", json={"sources": [dict(loc, n=1, **bad)]}).json()
+    assert not r["cases"] and "not downloaded" in r["errors"][0], r
+app.DATA = real_data
+
+# concurrency: calls really overlap, never exceed the setting; a 429 halves it, pauses and retries once
+import asyncio as _aio
+inflight = {"now": 0, "max": 0, "calls": 0}
+throttle_left = {"n": 0}
+
+
+async def slow_lakera(request: httpx.Request) -> httpx.Response:
+    inflight["now"] += 1; inflight["max"] = max(inflight["max"], inflight["now"]); inflight["calls"] += 1
+    try:
+        await _aio.sleep(0.05)
+        if b"connection test" not in request.content and throttle_left["n"] > 0:
+            throttle_left["n"] -= 1
+            return httpx.Response(429, text="Too Many Requests", headers={"Retry-After": "1"})
+        return httpx.Response(200, json=SAMPLE)
+    finally:
+        inflight["now"] -= 1
+
+
+real_client, app.client = app.client, httpx.AsyncClient(transport=httpx.MockTransport(slow_lakera))
+many = [{"id": f"m#{i}", "source": "m", "prompt": f"p{i}"} for i in range(24)]
+import time as _t
+t = _t.time()
+evs = [json.loads(x) for x in c.post("/api/run", json={"api_key": "k", "cases": many, "concurrency": 8}).text.splitlines()]
+fast = _t.time() - t
+got = [e for e in evs if e["type"] == "case"]
+assert inflight["max"] == 8 and len(got) == 24 and sorted(e["i"] for e in got) == list(range(24))
+assert evs[0]["concurrency"] == 8 and fast < 24 * 0.05 / 2, fast  # well under the sequential time
+inflight.update(now=0, max=0, calls=0); throttle_left["n"] = 1
+evs = [json.loads(x) for x in c.post("/api/run", json={"api_key": "k", "cases": many, "concurrency": 8}).text.splitlines()]
+done = evs[-1]
+assert done["throttled"] == 1 and done["final_concurrency"] == 4 and done["errors"] == 0, done  # retried, not lost
+assert inflight["calls"] == 1 + 24 + 1  # warm-up + every case + one retry
+inflight.update(now=0, max=0, calls=0); throttle_left["n"] = 99  # still 429 after the retry -> recorded, run goes on
+evs = [json.loads(x) for x in c.post("/api/run", json={"api_key": "k", "cases": many[:3], "concurrency": 2}).text.splitlines()]
+assert evs[-1]["errors"] == 3 and evs[-1]["final_concurrency"] == 1 and all("429" in e["case"]["error"] for e in evs if e["type"] == "case")
+throttle_left["n"] = 0
+assert c.post("/api/run", json={"api_key": "k", "cases": many, "concurrency": 17}).status_code == 422
+assert app.retry_seconds("5") == 5 and app.retry_seconds(None) == 1 and app.retry_seconds("Wed, 21 Oct") == 1 and app.retry_seconds("999") == 30
+app.client = real_client
+
+# Hugging Face token test: whoami, never cached, token never echoed
+r = c.get("/api/hf/test", headers={"X-HF-Token": "hf_goodtoken123"}).json()
+assert r == {"ok": True, "name": "alice", "role": "read"}, r
+r = c.get("/api/hf/test", headers={"X-HF-Token": "hf_badtoken456"}).json()
+assert not r["ok"] and "401" in r["error"] and "hf_badtoken456" not in str(r)
+assert c.get("/api/hf/test").status_code == 422
+assert 'id="hfTest"' in (Path(app.__file__).with_name("index.html")).read_text()
+
+# big HF samples: downloaded once as Parquet, same rows as via /rows for the same seed, then no HF calls at all
+via_rows = c.post("/api/cases", json={"seed": 8, "sources": [dict(src, n=60, label="label")]}).json()["cases"]
+real_data, app.DATA = app.DATA, Path(tempfile.mkdtemp())
+real_pages, app.HF_ROWS_MAX_PAGES = app.HF_ROWS_MAX_PAGES, 1
+n0 = len(seen)
+via_parquet = c.post("/api/cases", json={"seed": 8, "sources": [dict(src, n=60, label="label")]}).json()
+assert via_parquet["cases"] == via_rows and not via_parquet["errors"], (via_parquet["errors"], len(via_parquet["cases"]), len(via_rows))
+assert any("/parquet/" in str(q.url) for q in seen[n0:]) and not any("/rows" in str(q.url) for q in seen[n0:])
+assert (app.DATA / "d__x" / "c" / "train" / "0.parquet").exists() and not list(app.DATA.rglob("*.part"))
+n0 = len(seen)
+again = c.post("/api/cases", json={"seed": 8, "sources": [dict(src, n=60, label="label")]}).json()
+assert again["cases"] == via_rows and len(seen) == n0, "cached split: no Hugging Face requests"
+assert "d/x" in c.get("/api/local").json()  # also shows up under Downloaded datasets
+bad = c.post("/api/cases", json={"sources": [dict(src, config="../../..", n=60)]}).json()
+assert not bad["cases"] and bad["errors"]
+app.DATA, app.HF_ROWS_MAX_PAGES = real_data, real_pages
+
 # credentials are session-based: the page keeps them only in sessionStorage, never localStorage
 import re
 html = (Path(app.__file__).with_name("index.html")).read_text()
@@ -216,6 +327,9 @@ creds = {"key", "judgeKey", "hfToken"}
 assert creds <= session and not creds & persistent, (session, persistent)
 assert all(f'id="{i}" type="password" autocomplete="off"' in html for i in creds)
 assert "credentialCheck();" in html  # in-app check runs on load
+resume = html[html.index("async function resumeRun"):html.index("async function resumeRun") + 3000]
+assert resume.index('post("/api/test"') < resume.index("runSegment(")  # Resume tests connectivity before running
+assert 'id="runStop"' in html and 'id="runResume"' in html
 assert re.search(r"const ALL_MAX = (\d+);", html).group(1) == str(app.ALL_MAX) == "500000"  # UI and backend agree
 # ...and the backend holds no credential after a request: HF token goes upstream, not into the cache or response
 HF_SECRET = "hf_SECRETtoken123"

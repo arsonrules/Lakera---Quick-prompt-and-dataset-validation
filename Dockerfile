@@ -6,5 +6,6 @@ COPY app.py index.html report.js ./
 COPY scenarios ./scenarios
 USER app
 EXPOSE 8765
-# Publish on localhost only: docker run --rm -p 127.0.0.1:8765:8765 lakera-guard-tester
+# Publish on localhost only; mount downloaded datasets:
+#   docker run --rm -p 127.0.0.1:8765:8765 -v "$PWD/data:/app/data" lakera-guard-tester
 CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8765"]

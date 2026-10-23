@@ -13,34 +13,33 @@ Or with Docker (published on localhost only, because the backend forwards your A
 
 ```bash
 docker build -t lakera-guard-tester .
-docker run --rm -p 127.0.0.1:8765:8765 lakera-guard-tester
+docker run --rm -p 127.0.0.1:8765:8765 -v "$PWD/data:/app/data" lakera-guard-tester
 ```
 
 ## Using it
 
-1. **Settings bar:**
-   - Lakera API key, endpoint (7 regions) and optional project ID.
-   - Optional Hugging Face (HF) token, for rate limits and gated datasets.
-   - Optional **judge model**: an OpenAI-compatible base URL, an optional API key, and a model name.
+New to guardrail testing? The app walks you through it: **Quick check** tries one prompt; then **1 Choose prompts → 2 Run test → 3 Report**. A tick appears on each step once it's done.
 
-   **Test connection** and **Test judge** check each one.
-2. **Chat:** type any prompt, with an optional system prompt. Each message is screened, and you see the flag, the level for each detector group, the latency and, if a judge is set, its verdict.
-3. **Datasets:** pick sources from three places:
-   - presets (Lakera's evaluation list plus benign and DLP sets);
-   - Hugging Face search, then choose the config, split and text column;
-   - an uploaded `.csv` / `.json` / `.jsonl` / `.txt` file.
-
-   Set **N** for each dataset and a **seed**. The random sampling is reproducible, and adding a dataset never reshuffles the others.
-   To use every row instead, tick **All rows** in the Hugging Face search or upload picker, tick **All** on a selected dataset, or click **Load all rows** to do it for every selected dataset and build in one step. "All" is limited to 500,000 rows per dataset; larger datasets are refused with a message. Hugging Face serves 100 rows per request, so a large split means thousands of requests (451k rows ≈ 4,500): add an HF token, and expect it to take a while. Builds and runs over 10,000 prompts ask for confirmation first, since a run makes one Lakera call per prompt (100k prompts ≈ 8 hours at ~0.3 s each) and uses your quota.
-
-   After **Build sample** you can download it:
-   - **.jsonl** keeps every field, including labels and agent scenarios' messages and tools. Uploading it again rebuilds the same sample with no Hugging Face calls; set N ≥ the row count to keep every row.
-   - **.csv** has id, source, prompt and label, for spreadsheets. Cells starting with `=`, `+`, `-` or `@` get a leading `'` so spreadsheets don't run them as formulas.
-4. **Run:** prompts are screened one at a time.
-   - A warm-up call opens the connection first; it isn't recorded or counted in latency. If the warm-up gets a 401 or 403, the run stops before using quota.
-   - Progress is live, and you can cancel at any point.
-   - Errors, including `429`, are recorded on the prompt and the run continues.
-5. **Report:** metrics, charts, bypass candidates and a filterable case table. Then **Export HTML** (an interactive offline file) or **Export JSON**.
+1. **Top bar:** your Lakera API key, the region, and an optional project ID (blank uses Lakera's default policy, which runs every detector). **Test connection** checks the key, and the lock note confirms keys stay in this browser tab.
+2. **Quick check:** type any prompt, or click an example (prompt injection, normal question, personal data, suspicious link). The answer says in plain words whether Lakera flagged it, which detector caught it, how sure it was (for example "L3 likely") and what that detector looks for.
+3. **1 Choose prompts:**
+   - **Use the recommended starter set** adds 100 labeled prompts (attacks and normal prompts) and builds the test set in one click.
+   - Or pick sources yourself: **presets** grouped by what Lakera should do with them (Labeled mix, Attacks, Harmful content, Benign, Personal data, Agent tool calls); click a preset to add it and again to remove it. You can also use **downloaded datasets**, **Hugging Face search** (with an optional token) or **upload a file**.
+   - For each source choose how many prompts to use at random, or tick **All**. The **random seed** makes the picks repeatable, and adding a source never reshuffles the others.
+   - "All" is limited to 500,000 rows per source. Small Hugging Face samples are read through its dataset viewer (100 rows per request). That API rate-limits hard (429), even with a token, so a sample that would need more than 10 requests downloads the whole split once as Parquet into `data/` instead: a few requests, and later builds read it from disk. Builds and runs over 10,000 prompts ask for confirmation first.
+   - **Build test set** shows what you got, for example "37 labeled malicious, 63 labeled benign". Download it as **.jsonl** (every field; upload it again to rerun exactly the same prompts) or **.csv** (for spreadsheets; cells starting with `=`, `+`, `-` or `@` get a leading `'` so they can't run as formulas).
+4. **2 Run test:**
+   - Optional **judge model** (any OpenAI-compatible API) labels each prompt, so prompts without labels can be scored too and the report adds Attack Success Rate, Precision and more.
+   - Optional **system prompt**, sent with every prompt the way your app would send it.
+   - **Parallel checks** (1–16, default 4). Lakera publishes no per-second rate limit (only a `429` response, and 10,000 requests a month on Community plans), so on a `429` the test halves its parallel checks, pauses for the server's `Retry-After` (1 s if absent) and retries that prompt once. A second `429`, or any other error, is recorded on the prompt and the test continues. More parallel checks finish sooner but can make each answer slower.
+   - A warm-up call opens the connection first and isn't counted. If it gets a 401 or 403, the test stops before using quota.
+   - **Stop** ends the test at any point and keeps every result. **Resume (N left)** tests the connection first, then checks only the prompts that hadn't finished (any that were in flight when you stopped are re-run). If the region or project changed, Resume asks first. **Start test** starts over and asks before discarding a stopped test.
+5. **3 Report:**
+   - **At a glance:** the answer in plain sentences, for example "Lakera caught 9 of the 23 prompts it should have flagged (39%)" and "It wrongly flagged 2 of the 24 prompts it should have let through (8%)", plus response time.
+   - **How to read this report:** a glossary (flagged, confidence levels L1–L5, each detector group, malicious/benign, threat, false alarm, judge, failed check, response time) and this run's details.
+   - Metrics grouped by question: **Overview**, **Catching threats**, **Avoiding false alarms**, **The judge's view** (judge-only metrics, kept apart because the judge can disagree with dataset labels) and **Speed**. Each says what it means and whether higher or lower is better; **ⓘ** shows how it's calculated with this run's numbers.
+   - **Results by source** (click a row to list its prompts), Lakera against the datasets' labels and against the judge (Caught / Missed / False alarm / Correctly let through), charts by detector and source, response times, prompts not flagged, and **All prompts** with filters. Click any prompt for its full text (or agent conversation), what each detector reported, the dataset label and the judge's verdict.
+   - Sections fold (Expand all / Collapse all). **Download report (HTML)** gives an interactive offline file; **Download data (JSON)** the raw results.
 
 ## Endpoints
 
@@ -72,6 +71,8 @@ docker run --rm -p 127.0.0.1:8765:8765 lakera-guard-tester
 | Metric | Needs | Definition |
 |---|---|---|
 | Detection rate | — | flagged ÷ prompts screened successfully |
+| False alarm rate | dataset label, agent scenario or judge | prompts that should be let through but were flagged ÷ prompts that should be let through (failed checks left out) |
+| Effective detection rate | dataset label, agent scenario or judge | should-flag prompts flagged ÷ all should-flag prompts; failed calls count as missed. "Should flag" comes from the dataset label (malicious), else the scenario (unauthorized), else the judge (malicious or sensitive data); prompts with none are left out |
 | Bypass candidates | — | prompts with flag = false (without a judge these are candidates, not confirmed misses) |
 | Avg RTT / Max latency | — | backend-measured round trip to Lakera, errors and warm-up excluded |
 | Attack Success Rate | judge | judged malicious & not flagged ÷ judged malicious |
@@ -83,6 +84,22 @@ docker run --rm -p 127.0.0.1:8765:8765 lakera-guard-tester
 | Allowed actions blocked | agent scenarios | `expected: allowed` & flagged ÷ allowed scenarios |
 
 **The judge** reviews every prompt that Lakera screened successfully (both `flag=true` and `flag=false`), and its time is never counted in Lakera latency. Its verdicts are model labels, not ground truth, and the report says so.
+
+## Local datasets (fast loading)
+
+Download datasets once into `data/` (git-ignored); the **Datasets → Local datasets** list then samples them from disk with no Hugging Face requests or rate limits. Loading all 451,424 Nemotron train rows takes about 3 seconds.
+
+```bash
+.venv/bin/python download_datasets.py                      # the default list
+.venv/bin/python download_datasets.py org/name             # any other dataset
+HF_TOKEN=hf_... .venv/bin/python download_datasets.py      # gated datasets
+```
+
+- **What's downloaded:** each dataset's Parquet conversion from Hugging Face, every config and split, a few requests per split. Files already on disk are skipped.
+- **Gated datasets** (`walledai/XSTest`, `hackaprompt/hackaprompt-dataset`, `MAlmasabi/Indirect-Prompt-Injection-BIPIA-GPT`): accept each one's terms on its Hugging Face page while signed in, then rerun with `HF_TOKEN` set to a read token. Without that they're skipped with a message.
+- **`qxcv/tensor-trust`** has no Parquet conversion, so its three benchmark JSONL files are downloaded and converted. The 130 MB+ raw dumps are skipped.
+- **Default labels:** label columns are auto-detected (`label`, `prompt_label`, `is_prompt_extraction`, …). NotInject defaults to "whole dataset benign" and tensor-trust to "whole dataset malicious"; change either in the picker.
+- **Docker:** `data/` isn't in the image; mount it with `-v "$PWD/data:/app/data"`.
 
 ## Dataset labels (for cross-checking)
 
@@ -123,7 +140,7 @@ Lakera's built-in PII detectors cover 8 types: full name, US mailing address, US
 ## Known limitations
 
 - **No end-to-end attack success.** No model is called, so "Attack Success Rate" means the guardrail was bypassed, not that the attack worked.
-- **Rate limits.** No throttling or retry for Lakera: a `429` is recorded on that prompt. HF's dataset viewer rate-limits anonymous use, so add an HF token for large samples.
+- **Rate limits.** Lakera documents no numeric rate limit, so the run can only react to `429`s (halve concurrency, pause, retry once); it can't stay under a limit it doesn't know. HF's dataset viewer rate-limits anonymous use, so add an HF token or use local datasets for large samples.
 - **Not in the dashboard.** `/v2/guard/results` calls are not logged in the Lakera dashboard, and `/v2/guard` is never called.
 - **Text only.** Images and audio are out of scope.
 - **Unknown detector names.** Detector types that aren't listed above land in "Other". A live run on 2026-10-15 (us-east-1, a project with 17 detectors) returned these, all grouped correctly:
@@ -154,4 +171,5 @@ node test_report.js            # metrics + export check against hand-computed ex
 | `index.html` | the single-page UI (no build step) |
 | `report.js` | metrics and report rendering; inlined into HTML exports |
 | `scenarios/agent_actions.jsonl` | bundled agent scenario pack |
+| `download_datasets.py` | downloads Hugging Face datasets into `data/` as Parquet |
 | `PLAN.md` | design and the Lakera capability and gap review |

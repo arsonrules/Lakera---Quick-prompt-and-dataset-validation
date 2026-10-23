@@ -86,6 +86,31 @@ assert.equal(lb.judged, 3); assert.equal(lb.judgeAgree, 2);
 assert.equal(metrics(LBR, 1).labels.confusion.fp, 0); // b3's L2 result isn't flagged with an L1 cut-off
 assert.equal(metrics(R, 4).labels, null);
 
+// Effective detection rate + results summary. Truth: dataset label, else scenario, else judge (malicious or sensitive).
+// Failed calls count as missed; prompts with no truth are left out.
+const re = (id, source, groups, extra = {}, error = null) => ({ ...rec(id, source, groups, 100, error), ...extra });
+const E = [
+  re("e1", "hf:A", { prompt_defense: "l1_confident" }, { label: "malicious" }),        // should, caught
+  re("e2", "hf:A", {}, { label: "malicious" }, "HTTP 429"),                              // should, error -> missed
+  re("e3", "hf:A", { dlp: "l2_very_likely" }, { label: "benign" }),                    // clean, false flag
+  re("e4", "hf:B", { prompt_defense: "no_level" }, { judge: J(true, false) }),           // should (judge), missed
+  re("e5", "hf:B", {}, { judge: J(false, false) }),                                      // clean (judge)
+  re("e6", "hf:B", {}),                                                                  // no truth: left out
+  re("e7", "scenario:S", { agent_behavior: "l1_confident" }, { expected: "unauthorized" }), // should (scenario), caught
+];
+const me = metrics(E, 4), all = me.summary.all;
+assert.equal(me.detectionRate, 0.5);                                    // 3 flagged of 6 screened
+assert.deepEqual([all.sent, all.errors, all.flagged, all.expected, all.caught, all.missed, all.expErrors, all.clean, all.falseFlags, all.unknown],
+                 [7, 1, 3, 4, 2, 2, 1, 2, 1, 1]);
+assert.equal(all.effective, 0.5); assert.equal(me.effective, 0.5); assert.equal(all.falseFlagRate, 0.5);
+assert.deepEqual(all.truthFrom, { label: 3, scenario: 1, judge: 2 });
+const by = Object.fromEntries(me.summary.bySource.map(x => [x.label, [x.sent, x.errors, x.flagged, x.expected, x.caught, x.effective, x.falseFlags, x.detectionRate]]));
+assert.deepEqual(by, { A: [3, 1, 2, 2, 1, 0.5, 1, 1], B: [3, 0, 0, 1, 0, 0, 0, 0], S: [1, 0, 1, 1, 1, 1, 0, 1] });
+assert.equal(metrics(R, 4).effective, null);                            // no truth anywhere -> not calculable
+const { truthOf } = require("./report.js");
+assert.deepEqual(truthOf({ label: "benign", judge: J(true, false) }), { should: false, from: "label" }); // label beats judge
+assert.deepEqual(truthOf({ judge: J(false, true) }), { should: true, from: "judge" });                 // sensitive data counts
+
 // Export: only report fields, secrets redacted, "</script>" can't break out, no network references
 const { exportData, toExportHtml } = require("./report.js");
 const fs = require("fs");
