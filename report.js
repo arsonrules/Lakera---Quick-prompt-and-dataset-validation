@@ -39,6 +39,34 @@
     };
   }
 
+  // Dataset composition: only what the datasets themselves say (label column, whole-dataset label, scenario).
+  // The judge is deliberately not counted here: it's a model's opinion, not the dataset's.
+  function composition(records) {
+    const count = list => {
+      const c = { total: list.length, malicious: 0, benign: 0, unauthorized: 0, allowed: 0, unclear: 0, unlabeled: 0 };
+      for (const r of list) {
+        if (r.expected) c[r.expected]++;
+        else if (r.label === "malicious" || r.label === "benign") c[r.label]++;
+        else if (r.label_raw) c.unclear++;   // a label column whose value isn't malicious/benign
+        else c.unlabeled++;
+      }
+      c.labeled = c.total - c.unclear - c.unlabeled;
+      return c;
+    };
+    const how = list => {
+      if (list.some(r => r.expected)) return "agent scenario (expected outcome)";
+      const raw = (list.find(r => r.label_raw) || {}).label_raw;
+      if (!raw) return list.some(r => r.label) ? "dataset label" : "no labels";
+      return raw.startsWith("whole dataset: ") ? `whole dataset marked ${raw.slice(15)}` : `label column "${raw.split(" = ")[0]}"`;
+    };
+    const bySource = [...new Set(records.map(r => r.source))].map(src => {
+      const list = records.filter(r => r.source === src);
+      return { key: src, label: src.replace(/^(hf|upload|scenario|local):/, ""), how: how(list), ...count(list) };
+    });
+    const all = count(records);
+    return { ...all, bySource, unlabeledSources: bySource.filter(x => !x.labeled), anyLabels: all.labeled > 0 };
+  }
+
   function metrics(records, k) {
     const ok = records.filter(r => !r.error);
     const isFlag = r => Object.values(r.groups || {}).some(lv => hit(lv, k));
@@ -102,6 +130,7 @@
     };
     return {
       k, total: records.length, ok: ok.length, errors: records.filter(r => r.error), isFlag, judge, agent, labels, summary,
+      composition: composition(records),
       effective: summary.all.effective,
       flagged: flagged.length, detectionRate: rate(flagged.length, ok.length),
       bypass: ok.filter(r => !isFlag(r)).sort((a, b) => rank(best(a)) - rank(best(b))),
@@ -285,6 +314,15 @@
   .rpt .gloss dl.facts dt { font-weight:500; color:var(--r-ink2); } .rpt .gloss dl.facts dd { margin:0; color:var(--r-ink); }
   .rpt .tile .mk { color:var(--r-muted); display:inline-flex; }
   @media (max-width:560px) { .rpt .gloss { grid-template-columns:1fr; gap:2px 0; } .rpt .gloss dd { margin-bottom:8px; } }
+  .rpt .compbar { display:flex; gap:2px; height:14px; border-radius:4px; overflow:hidden; margin:4px 0 8px; }
+  .rpt .compbar .seg { min-width:3px; }
+  .rpt .seg-mal { background:var(--r-bad); } .rpt .seg-ben { background:var(--r-good); } .rpt .seg-none { background:var(--r-muted); }
+  .rpt .hatch { background-image:repeating-linear-gradient(45deg, rgba(255,255,255,.35) 0 2px, transparent 2px 6px); }
+  .rpt .legend { display:flex; flex-wrap:wrap; gap:4px 16px; font-size:12px; color:var(--r-ink2); margin-bottom:10px; }
+  .rpt .legend span { display:inline-flex; align-items:center; gap:4px; } .rpt .legend b { color:var(--r-ink); }
+  .rpt .sw { width:10px; height:10px; border-radius:2px; display:inline-block; }
+  .rpt .warnbox { display:flex; gap:8px; align-items:flex-start; background:var(--r-warn-bg); color:var(--r-ink); border-radius:8px; padding:10px 12px; margin:8px 0 0; font-size:13px; }
+  .rpt .warnbox .ic { color:var(--r-warn); margin-top:2px; }
   .rpt-tip { position:fixed; z-index:50; pointer-events:none; background:var(--r-surface,#fff); color:var(--r-ink,#000); border:1px solid var(--r-ring);
              border-radius:6px; padding:6px 8px; font:12px/1.4 system-ui,sans-serif; box-shadow:0 4px 14px rgba(0,0,0,.18); max-width:280px; }
   .rpt-tip b { display:block; font-size:13px; }
@@ -532,6 +570,41 @@
       h("tbody", null, row("All sources", S.all, "", "total"), ...S.bySource.map(x => row(x.label, x, x.key)))));
   }
 
+  // Dataset composition section: what the test set is made of, per the datasets' own labels.
+  function compositionView(C, judgeOn) {
+    const parts = [];
+    const relies = judgeOn
+      ? "the judge model's verdicts, plus what Lakera's guardrails flagged"
+      : "what Lakera's guardrails flagged on their own: the report can't tell right flags from wrong ones";
+    if (!C.anyLabels) {
+      parts.push(h("div", "warnbox", icon("alert"), h("div", null,
+        h("b", null, "There's no indicator for dataset composition. "),
+        `None of the selected datasets says which prompts are malicious or benign, so all the test results rely heavily on ${relies}.`,
+        judgeOn ? null : " Add a judge model on the Run tab, or pick datasets with labels (for example the Labeled mix presets).")));
+      return parts;
+    }
+    const segs = [["malicious", "Labeled malicious", "seg-mal"], ["benign", "Labeled benign", "seg-ben"],
+                  ["unauthorized", "Unauthorized tool calls", "seg-mal"], ["allowed", "Allowed tool calls", "seg-ben"],
+                  ["unclear", "Label not malicious/benign", "seg-none"], ["unlabeled", "No label", "seg-none"]].filter(([key]) => C[key]);
+    const bar = h("div", "compbar");
+    for (const [key, name, cls] of segs) {
+      const seg = h("div", "seg " + cls + (key === "unauthorized" || key === "allowed" ? " hatch" : "")); seg.style.flexGrow = C[key];
+      tip(seg, `${C[key].toLocaleString()} (${pct(C[key] / C.total)})`, name); bar.append(seg);
+    }
+    const legend = h("div", "legend", ...segs.map(([key, name, cls]) => h("span", null, h("i", "sw " + cls + (key === "unauthorized" || key === "allowed" ? " hatch" : "")),
+      `${name}: `, h("b", null, C[key].toLocaleString()), ` (${pct(C[key] / C.total)})`)));
+    parts.push(bar, legend);
+    const head = ["Source", "Prompts", "Malicious", "Benign", "No label", "Labels from"].map((t, i) => h("th", i && i < 5 ? "num" : null, t));
+    const rows = C.bySource.map(x => h("tr", null, h("td", "src", x.label), h("td", "num", x.total.toLocaleString()),
+      h("td", "num", (x.malicious + x.unauthorized).toLocaleString()), h("td", "num", (x.benign + x.allowed).toLocaleString()),
+      h("td", "num", (x.unlabeled + x.unclear).toLocaleString()), h("td", null, x.how)));
+    parts.push(h("div", "tw", h("table", null, h("thead", null, h("tr", null, ...head)), h("tbody", null, ...rows))));
+    if (C.unlabeledSources.length)
+      parts.push(h("div", "warnbox", icon("alert"), h("div", null, h("b", null, `No labels in ${C.unlabeledSources.map(x => x.label).join(", ")}. `),
+        `Results for ${C.unlabeledSources.length === 1 ? "this source" : "these sources"} rely on ${relies}.`)));
+    return parts;
+  }
+
   // The plain-language answer: what the test found, in sentences, before any chart.
   function glance(m) {
     const S = m.summary.all, L = m.latency, A = m.agent, b = t => h("b", null, t);
@@ -547,7 +620,9 @@
     else if (!S.expected) lines.push(note("No prompts that should be flagged were tested, so the catch rate wasn't measured. Add attack prompts to measure it."));
     if (S.expErrors) lines.push(note(`${plural(S.expErrors, "failed check is", "failed checks are")} counted as missed, because a failed check protects nothing.`));
     if (S.unknown && (S.expected || S.cleanChecked)) lines.push(note(`${plural(S.unknown, "prompt has", "prompts have")} no label, scenario or judge verdict, so ${S.unknown === 1 ? "it isn't" : "they aren't"} in these numbers.`));
-    const J = m.judge, LB = m.labels;
+    const J = m.judge, LB = m.labels, C = m.composition;
+    if (!C.anyLabels && (S.expected || S.cleanChecked))
+      lines.push(note("The datasets don't say which prompts are malicious or benign, so these numbers rest on the judge's verdicts. See Dataset composition."));
     if (J && LB && LB.judged && LB.judgeAgree < LB.judged)
       lines.push(note(`The judge disagrees with the datasets' labels on ${plural(LB.judged - LB.judgeAgree, "prompt", "prompts")}. These numbers follow the labels; "The judge's view" below follows the judge.`));
     if (A) lines.push(p("Agent tool calls: ", b(`${A.through.length} of ${A.unauthorized}`), " unauthorized calls got through", A.agentSeen ? "." : ". This policy has no Agent Behavior detector, so only other detectors could catch them."));
@@ -723,7 +798,13 @@
       refilter(); allSec.setOpen(true); allSec.scrollIntoView({ behavior: "smooth", block: "start" });
     };
 
-    const parts = [head, glance(m), gloss, overview, catching, falseAlarms, judgeView, speed, note];
+    const C = m.composition;
+    const compSec = sec("composition", "Dataset composition", {
+      sub: C.anyLabels ? `What the ${plural(C.total, "test prompt", "test prompts")} are, according to the datasets themselves (not the judge).` : null,
+      explain: [`Counts come only from the datasets: a label column, a whole dataset marked malicious or benign, or an agent scenario's expected outcome. The judge's verdicts are not counted here, because they're a model's opinion.`,
+                `Prompts whose label value isn't malicious or benign, and prompts from sources without labels, count as "No label". Their results rest on the judge (if one is set) or only on what Lakera flagged.`] },
+      ...compositionView(C, !!J));
+    const parts = [head, glance(m), compSec, gloss, overview, catching, falseAlarms, judgeView, speed, note];
     parts.push(sec("summary", "Results by source", {
       sub: "The total first, then each dataset or file. Click a row to list its prompts.",
       explain: [`Detection rate = flagged ÷ checked. Effective detection rate = caught ÷ should be flagged, with failed checks counted as missed. False alarm rate = false alarms ÷ prompts that should be let through.`,
@@ -838,7 +919,7 @@ LakeraReport.render(document.getElementById("root"), JSON.parse(document.getElem
 `;
   }
 
-  const api = { metrics, render, exportData, toExportHtml, truthOf, LEVELS, GROUPS, GROUP_HELP, rank, levelText, friendlyError, plural, times, icon };
+  const api = { composition, metrics, render, exportData, toExportHtml, truthOf, LEVELS, GROUPS, GROUP_HELP, rank, levelText, friendlyError, plural, times, icon };
   if (typeof module === "object" && module.exports) module.exports = api;
   else window.LakeraReport = api;
 })();

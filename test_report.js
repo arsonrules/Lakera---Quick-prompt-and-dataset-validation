@@ -111,6 +111,18 @@ const { truthOf } = require("./report.js");
 assert.deepEqual(truthOf({ label: "benign", judge: J(true, false) }), { should: false, from: "label" }); // label beats judge
 assert.deepEqual(truthOf({ judge: J(false, true) }), { should: true, from: "judge" });                 // sensitive data counts
 
+// Dataset composition: only the datasets' own labels count (never the judge)
+const { composition } = require("./report.js");
+const ce = composition(E);
+assert.deepEqual([ce.total, ce.malicious, ce.benign, ce.unauthorized, ce.unlabeled, ce.labeled, ce.anyLabels], [7, 2, 1, 1, 3, 4, true]); // e4/e5 judge-only -> unlabeled
+assert.deepEqual(ce.unlabeledSources.map(x => x.label), ["B"]);
+assert.deepEqual(ce.bySource.map(x => x.how), ["dataset label", "no labels", "agent scenario (expected outcome)"]);
+const cl = composition([{ source: "hf:W", label: "malicious", label_raw: "whole dataset: malicious" },
+                        { source: "hf:C", label: "benign", label_raw: "type = benign" }, { source: "hf:C", label: null, label_raw: "type = ?" }]);
+assert.deepEqual(cl.bySource.map(x => [x.how, x.unclear]), [["whole dataset marked malicious", 0], ['label column "type"', 1]]);
+assert.equal(composition([rec("u1", "upload:f", {}, 1), rec("u2", "upload:f", {}, 1)]).anyLabels, false);
+assert.equal(metrics(E, 4).composition.total, 7);
+
 // Export: only report fields, secrets redacted, "</script>" can't break out, no network references
 const { exportData, toExportHtml } = require("./report.js");
 const fs = require("fs");
