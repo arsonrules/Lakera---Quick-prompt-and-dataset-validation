@@ -41,15 +41,12 @@
 
   // Dataset composition: only what the datasets themselves say (label column, whole-dataset label, scenario).
   // The judge is deliberately not counted here: it's a model's opinion, not the dataset's.
+  // unclear = a label column whose value isn't malicious/benign
+  const compCat = r => r.expected || (r.label === "malicious" || r.label === "benign" ? r.label : r.label_raw ? "unclear" : "unlabeled");
   function composition(records) {
     const count = list => {
       const c = { total: list.length, malicious: 0, benign: 0, unauthorized: 0, allowed: 0, unclear: 0, unlabeled: 0 };
-      for (const r of list) {
-        if (r.expected) c[r.expected]++;
-        else if (r.label === "malicious" || r.label === "benign") c[r.label]++;
-        else if (r.label_raw) c.unclear++;   // a label column whose value isn't malicious/benign
-        else c.unlabeled++;
-      }
+      for (const r of list) c[compCat(r)]++;
       c.labeled = c.total - c.unclear - c.unlabeled;
       return c;
     };
@@ -232,6 +229,7 @@
   .rpt .glance { padding:14px 16px; } .rpt .glance h3 { margin-bottom:6px; }
   .rpt .glance p { margin:4px 0; font-size:15px; line-height:1.5; max-width:75ch; } .rpt .glance p.muted { font-size:13px; }
   .rpt .glance b { font-weight:650; }
+  .rpt .linkbtn { border:0; background:none; padding:0; color:var(--r-accent); font:inherit; font-size:13px; cursor:pointer; text-decoration:underline; text-underline-offset:2px; }
   .rpt .tgroup { margin:0 0 14px; } .rpt h3.tg { font-size:13px; font-weight:600; color:var(--r-ink2); margin:0 0 6px; }
   .rpt .tiles { display:grid; grid-template-columns:repeat(auto-fill,minmax(170px,1fr)); gap:10px; align-items:start; }
   .rpt .tile { background:var(--r-surface); border:1px solid var(--r-ring); border-radius:10px; padding:10px 12px; }
@@ -244,8 +242,8 @@
   .rpt .tgroup .gnote { font-size:12px; color:var(--r-ink2); margin:-2px 0 8px; max-width:80ch; }
   .rpt .tile .d { font-size:12px; color:var(--r-muted); margin-top:2px; overflow-wrap:anywhere; }
   .rpt .tile.off .v { font-size:13px; font-weight:500; color:var(--r-muted); }
-  .rpt .two { display:grid; grid-template-columns:repeat(auto-fit,minmax(320px,1fr)); gap:12px; margin-bottom:12px; }
-  .rpt .two .card { margin:0; }
+  .rpt .two { display:grid; grid-template-columns:repeat(auto-fit,minmax(320px,1fr)); gap:12px; margin-bottom:12px; align-items:start; }
+  .rpt .two .card { margin:0; } .rpt .sec { scroll-margin-top:56px; }
   .rpt .bars { display:grid; grid-template-columns:minmax(90px,36%) 1fr; gap:10px 10px; align-items:center; }
   .rpt .bars .lab { font-size:12px; color:var(--r-ink); overflow-wrap:anywhere; }
   .rpt .bars .lab .help { display:block; font-size:11px; color:var(--r-muted); line-height:1.35; }
@@ -259,7 +257,7 @@
   .rpt .axis .ticks { position:relative; height:14px; font-size:11px; color:var(--r-muted); font-variant-numeric:tabular-nums; }
   .rpt .axis .ticks span { position:absolute; }
   .rpt .hist { position:relative; height:150px; display:flex; align-items:flex-end; gap:2px; border-bottom:1px solid var(--r-base); margin-top:22px; }
-  .rpt .hist .col { flex:1; background:var(--r-accent); border-radius:4px 4px 0 0; min-height:0; max-width:24px; margin:0 auto; }
+  .rpt .hist .col { flex:1; background:var(--r-accent); border-radius:4px 4px 0 0; min-height:0; }
   .rpt .hist .slot { flex:1; height:100%; display:flex; align-items:flex-end; justify-content:center; }
   .rpt .hist .slot:hover .col, .rpt .hist .slot:focus-visible .col { filter:brightness(1.15); }
   .rpt .mark { position:absolute; top:-18px; bottom:0; width:0; border-left:1px solid var(--r-ink2); }
@@ -283,7 +281,7 @@
   .rpt .filters { display:flex; flex-wrap:wrap; gap:8px; align-items:end; margin-bottom:8px; }
   .rpt button.info { border:0; background:none; color:var(--r-muted); cursor:pointer; font-size:16px; line-height:1; padding:2px; border-radius:4px; flex:none; display:inline-flex; }
   .rpt button.info:hover, .rpt button.info[aria-expanded="true"] { color:var(--r-accent); }
-  .rpt button:focus-visible, .rpt tr.case:focus-visible, .rpt tr.pick:focus-visible, .rpt .bar.pick:focus-visible, .rpt .hist .slot:focus-visible { outline:2px solid var(--r-accent); outline-offset:1px; }
+  .rpt button:focus-visible, .rpt tr.case:focus-visible, .rpt tr.pick:focus-visible, .rpt td.pick:focus-visible, .rpt .bar.pick:focus-visible, .rpt .hist .slot:focus-visible { outline:2px solid var(--r-accent); outline-offset:1px; }
   .rpt .why { font-size:12.5px; color:var(--r-ink2); background:var(--r-track); border-radius:6px; padding:8px 10px; margin:8px 0 2px; }
   .rpt .why p { margin:3px 0; max-width:80ch; }
   .rpt .sec-h { display:flex; align-items:center; justify-content:space-between; gap:6px; }
@@ -295,7 +293,8 @@
   .rpt .toolbar { display:flex; flex-wrap:wrap; gap:8px; }
   .rpt button.btn { font:inherit; font-size:12px; color:var(--r-ink); background:var(--r-surface); border:1px solid var(--r-base); border-radius:6px; padding:4px 10px; cursor:pointer; }
   .rpt button.btn:hover { border-color:var(--r-ink2); }
-  .rpt tr.case, .rpt tr.pick { cursor:pointer; }
+  .rpt tr.case, .rpt tr.pick, .rpt td.pick { cursor:pointer; }
+  .rpt td.pick:hover { background:var(--r-track); } .rpt td.pick b { text-decoration:underline dotted; text-underline-offset:3px; }
   .rpt tr.case:hover > td, .rpt tr.pick:hover > td { background:var(--r-track); }
   .rpt tr.case[aria-expanded="true"] > td { background:var(--r-track); border-bottom-color:transparent; }
   .rpt tr.detail > td { background:var(--r-track); padding:4px 12px 12px; }
@@ -307,6 +306,8 @@
   .rpt .blk { font-size:12px; font-weight:600; color:var(--r-ink2); margin:8px 0 2px; }
   .rpt table.sum tr.total td { font-weight:600; border-bottom:2px solid var(--r-base); }
   .rpt table.sum td.src { min-width:170px; }
+  .rpt table.sum th:first-child, .rpt table.sum td.src { position:sticky; left:0; background:var(--r-surface); z-index:1; } /* source stays visible while scrolling across */
+  @media (max-width:560px) { .rpt table.sum td.src { min-width:120px; } }
   .rpt .gloss { display:grid; grid-template-columns:minmax(120px,max-content) 1fr; gap:8px 18px; margin:0; font-size:13px; }
   .rpt .gloss dt { font-weight:600; } .rpt .gloss dd { margin:0; color:var(--r-ink2); max-width:80ch; }
   .rpt .gloss ul { margin:2px 0 0; padding-left:18px; } .rpt .gloss li { margin:2px 0; }
@@ -315,7 +316,13 @@
   .rpt .tile .mk { color:var(--r-muted); display:inline-flex; }
   @media (max-width:560px) { .rpt .gloss { grid-template-columns:1fr; gap:2px 0; } .rpt .gloss dd { margin-bottom:8px; } }
   .rpt .compbar { display:flex; gap:2px; height:14px; border-radius:4px; overflow:hidden; margin:4px 0 8px; }
-  .rpt .compbar .seg { min-width:3px; }
+  .rpt .compbar .seg { min-width:3px; display:flex; }
+  .rpt .compbar.det { height:22px; } .rpt .compbar .part { min-width:2px; }
+  .rpt .compbar .part.p, .rpt .sw.key-p { opacity:.35; } .rpt .compbar .part.e, .rpt .sw.key-e { background:var(--r-base); }
+  .rpt .sw.key-f, .rpt .sw.key-p { background:var(--r-ink2); }
+  .rpt .comptools { display:flex; justify-content:flex-end; margin:-4px 0 6px; } .rpt .btn.on { border-color:var(--r-accent); color:var(--r-accent); }
+  .rpt .detlist { list-style:none; padding:0; margin:0 0 10px; font-size:13px; color:var(--r-ink2); }
+  .rpt .detlist li { margin:3px 0; } .rpt .detlist .sw { margin-right:6px; } .rpt .detlist .linkbtn { font-size:12px; }
   .rpt .seg-mal { background:var(--r-bad); } .rpt .seg-ben { background:var(--r-good); } .rpt .seg-none { background:var(--r-muted); }
   .rpt .hatch { background-image:repeating-linear-gradient(45deg, rgba(255,255,255,.35) 0 2px, transparent 2px 6px); }
   .rpt .legend { display:flex; flex-wrap:wrap; gap:4px 16px; font-size:12px; color:var(--r-ink2); margin-bottom:10px; }
@@ -464,13 +471,18 @@
   }
 
   // 2×2 table of truth (rows) against Lakera's flag (columns), in plain words with the technical term underneath.
-  function confusion(c, rows) {
-    const cell = (n, label, term, cls) => h("td", "num" + (cls ? " " + cls : ""), h("b", null, n.toLocaleString()), h("div", "muted", label), h("div", "muted", term));
+  // onPick(cell) makes each count clickable ("tp", "fn", "fp", "tn") to list those prompts.
+  function confusion(c, rows, onPick) {
+    const cell = (n, label, term, cls, key) => {
+      const td = h("td", "num" + (cls ? " " + cls : ""), h("b", null, n.toLocaleString()), h("div", "muted", label), h("div", "muted", term));
+      if (onPick && n) { td.classList.add("pick"); td.tabIndex = 0; td.title = `List these ${n.toLocaleString()} prompts`; onActivate(td, () => onPick(key)); }
+      return td;
+    };
     const t = h("table", "cm",
       h("thead", null, h("tr", null, h("th"), h("th", "num", "Flagged"), h("th", "num", "Not flagged"))),
       h("tbody", null,
-        h("tr", null, h("th", null, rows[0]), cell(c.tp, "Caught", "true positive"), cell(c.fn, "Missed", "false negative", "warn")),
-        h("tr", null, h("th", null, rows[1]), cell(c.fp, "False alarm", "false positive", "warn"), cell(c.tn, "Correctly let through", "true negative"))));
+        h("tr", null, h("th", null, rows[0]), cell(c.tp, "Caught", "true positive", null, "tp"), cell(c.fn, "Missed", "false negative", "warn", "fn")),
+        h("tr", null, h("th", null, rows[1]), cell(c.fp, "False alarm", "false positive", "warn", "fp"), cell(c.tn, "Correctly let through", "true negative", null, "tn"))));
     return h("div", "tw", t);
   }
 
@@ -552,67 +564,117 @@
 
   // Results by source: a total row, then one row per dataset. Rows open that dataset's prompts.
   function summaryTable(S, onPick) {
+    // Each cell: the rate in bold, the counts behind it underneath.
+    const cell = (rate, n, of) => h("td", "num", h("b", null, rate), h("div", "muted", `${n.toLocaleString()} of ${of.toLocaleString()}`));
     const row = (label, x, key, cls) => {
-      const has = x.expected > 0;
-      const tr = h("tr", "pick" + (cls ? " " + cls : ""), h("td", "src", label),
-        h("td", "num", pct(x.detectionRate)), h("td", "num", h("b", null, pct(x.effective))), h("td", "num", x.cleanChecked ? pct(x.falseFlagRate) : "–"),
-        h("td", "num", x.sent.toLocaleString()), h("td", "num", x.flagged.toLocaleString()),
-        h("td", "num", has ? x.expected.toLocaleString() : "–"), h("td", "num", has ? x.caught.toLocaleString() : "–"),
-        h("td", "num", has ? x.missed.toLocaleString() : "–"), h("td", "num", x.cleanChecked ? x.falseFlags.toLocaleString() : "–"),
+      const tr = h("tr", "pick" + (cls ? " " + cls : ""), h("td", "src", label), h("td", "num", x.sent.toLocaleString()),
+        cell(pct(x.detectionRate), x.flagged, x.ok),
+        x.expected ? cell(pct(x.effective), x.caught, x.expected) : h("td", "num muted", "–"),
+        x.cleanChecked ? cell(pct(x.falseFlagRate), x.falseFlags, x.cleanChecked) : h("td", "num muted", "–"),
         h("td", "num", x.errors.toLocaleString()), h("td", "num", ms(x.avgRtt)));
       tr.tabIndex = 0; tr.title = key ? "List this source's prompts" : "List all prompts";
       onActivate(tr, () => onPick(key));
       return tr;
     };
-    const head = ["Source", "Detection rate", "Effective detection rate", "False alarm rate", "Prompts", "Flagged", "Should be flagged",
-                  "Caught", "Missed", "False alarms", "Failed", "Avg response"].map((c, i) => h("th", i ? "num" : null, c));
+    const head = ["Source", "Prompts", "Flagged", "Threats caught", "False alarms", "Failed", "Avg response"].map((c, i) => h("th", i ? "num" : null, c));
     return h("div", "tw", h("table", "sum", h("thead", null, h("tr", null, ...head)),
       h("tbody", null, row("All sources", S.all, "", "total"), ...S.bySource.map(x => row(x.label, x, x.key)))));
   }
 
   // Dataset composition section: what the test set is made of, per the datasets' own labels.
-  function compositionView(C, judgeOn) {
-    const parts = [];
+  // "Check detection results" overlays what Lakera did on each part: solid = flagged, faded = not flagged, grey = failed.
+  const SEGS = [["malicious", "Labeled malicious", "seg-mal", true], ["benign", "Labeled benign", "seg-ben", false],
+                ["unauthorized", "Unauthorized tool calls", "seg-mal hatch", true], ["allowed", "Allowed tool calls", "seg-ben hatch", false],
+                ["unclear", "Label not malicious/benign", "seg-none", null], ["unlabeled", "No label", "seg-none", null]];
+  const DET_WORDS = { true: ["caught", "missed"], false: ["false positives", "correctly let through"], null: ["flagged", "not flagged"] };
+  let compDetect = false; // overlay on/off, kept while the page is open
+  function compositionView(C, judgeOn, records, isFlag, showPrompts) {
+    const box = h("div");
+    const tally = list => {
+      const d = {};
+      for (const r of list) { const c = d[compCat(r)] ||= { flag: 0, pass: 0, err: 0 }; c[r.error ? "err" : isFlag(r) ? "flag" : "pass"]++; }
+      return d;
+    };
+    const det = tally(records), detBy = Object.fromEntries(C.bySource.map(x => [x.key, tally(records.filter(r => r.source === x.key))]));
+    // Only categories the All prompts filters can isolate get a "Show" link.
+    const pureNone = !C.unclear && !C.unauthorized && !C.allowed;
+    const filterOf = { malicious: "malicious", benign: "benign", unlabeled: pureNone ? "none" : null };
     const relies = judgeOn
       ? "the judge model's verdicts, plus what Lakera's guardrails flagged"
       : "what Lakera's guardrails flagged on their own: the report can't tell right flags from wrong ones";
-    if (!C.anyLabels) {
-      parts.push(h("div", "warnbox", icon("alert"), h("div", null,
+    const draw = () => {
+      const parts = [], segs = SEGS.filter(([key]) => C[key]);
+      const toggle = h("button", "btn" + (compDetect ? " on" : ""), icon("flag"), compDetect ? "Hide detection results" : "Check detection results");
+      toggle.type = "button"; toggle.setAttribute("aria-pressed", String(compDetect));
+      toggle.title = "Show on the bar how many prompts of each kind Lakera flagged";
+      toggle.addEventListener("click", () => { compDetect = !compDetect; draw(); });
+      parts.push(h("div", "comptools", toggle));
+      if (!C.anyLabels) parts.push(h("div", "warnbox", icon("alert"), h("div", null,
         h("b", null, "There's no indicator for dataset composition. "),
         `None of the selected datasets says which prompts are malicious or benign, so all the test results rely heavily on ${relies}.`,
         judgeOn ? null : " Add a judge model on the Run tab, or pick datasets with labels (for example the Labeled mix presets).")));
-      return parts;
-    }
-    const segs = [["malicious", "Labeled malicious", "seg-mal"], ["benign", "Labeled benign", "seg-ben"],
-                  ["unauthorized", "Unauthorized tool calls", "seg-mal"], ["allowed", "Allowed tool calls", "seg-ben"],
-                  ["unclear", "Label not malicious/benign", "seg-none"], ["unlabeled", "No label", "seg-none"]].filter(([key]) => C[key]);
-    const bar = h("div", "compbar");
-    for (const [key, name, cls] of segs) {
-      const seg = h("div", "seg " + cls + (key === "unauthorized" || key === "allowed" ? " hatch" : "")); seg.style.flexGrow = C[key];
-      tip(seg, `${C[key].toLocaleString()} (${pct(C[key] / C.total)})`, name); bar.append(seg);
-    }
-    const legend = h("div", "legend", ...segs.map(([key, name, cls]) => h("span", null, h("i", "sw " + cls + (key === "unauthorized" || key === "allowed" ? " hatch" : "")),
-      `${name}: `, h("b", null, C[key].toLocaleString()), ` (${pct(C[key] / C.total)})`)));
-    parts.push(bar, legend);
-    const head = ["Source", "Prompts", "Malicious", "Benign", "No label", "Labels from"].map((t, i) => h("th", i && i < 5 ? "num" : null, t));
-    const rows = C.bySource.map(x => h("tr", null, h("td", "src", x.label), h("td", "num", x.total.toLocaleString()),
-      h("td", "num", (x.malicious + x.unauthorized).toLocaleString()), h("td", "num", (x.benign + x.allowed).toLocaleString()),
-      h("td", "num", (x.unlabeled + x.unclear).toLocaleString()), h("td", null, x.how)));
-    parts.push(h("div", "tw", h("table", null, h("thead", null, h("tr", null, ...head)), h("tbody", null, ...rows))));
-    if (C.unlabeledSources.length)
-      parts.push(h("div", "warnbox", icon("alert"), h("div", null, h("b", null, `No labels in ${C.unlabeledSources.map(x => x.label).join(", ")}. `),
-        `Results for ${C.unlabeledSources.length === 1 ? "this source" : "these sources"} rely on ${relies}.`)));
-    return parts;
+      if (C.anyLabels || compDetect) {
+        const bar = h("div", "compbar" + (compDetect ? " det" : ""));
+        for (const [key, name, cls, should] of segs) {
+          const seg = h("div", "seg" + (compDetect ? "" : " " + cls)), d = det[key];
+          seg.style.flexGrow = C[key];
+          if (compDetect) for (const [part, n] of [["f", d.flag], ["p", d.pass], ["e", d.err]]) {
+            if (!n) continue;
+            const x = h("div", "part " + part + (part === "e" ? "" : " " + cls)); x.style.flexGrow = n; seg.append(x);
+          }
+          const w = DET_WORDS[should];
+          tip(seg, `${C[key].toLocaleString()} (${pct(C[key] / C.total)})`, compDetect
+            ? `${name}: ${d.flag} ${w[0]}, ${d.pass} ${w[1]}${d.err ? `, ${d.err} failed` : ""}` : name);
+          bar.append(seg);
+        }
+        parts.push(bar);
+        const show = (n, label, state) => {
+          if (!n || !label) return null;
+          const a = h("button", "linkbtn", "show"); a.type = "button"; a.addEventListener("click", () => showPrompts({ label, state })); return a;
+        };
+        parts.push(compDetect
+          ? h("div", "detlegend",
+              h("div", "legend", h("span", null, h("i", "sw key-f"), "Solid: flagged by Lakera"), h("span", null, h("i", "sw key-p"), "Faded: not flagged"),
+                Object.values(det).some(d => d.err) ? h("span", null, h("i", "sw key-e"), "Grey: check failed") : null),
+              h("ul", "detlist", ...segs.map(([key, name, cls, should]) => {
+                const d = det[key], w = DET_WORDS[should], lab = filterOf[key];
+                return h("li", null, h("i", "sw " + cls), h("b", null, `${name} (${C[key].toLocaleString()})`), ": ",
+                  `${d.flag.toLocaleString()} ${w[0]} `, show(d.flag, lab, "flag"), ` · ${d.pass.toLocaleString()} ${w[1]} `, show(d.pass, lab, "pass"),
+                  d.err ? ` · ${d.err.toLocaleString()} failed` : null);
+              })))
+          : h("div", "legend", ...segs.map(([key, name, cls]) => h("span", null, h("i", "sw " + cls),
+              `${name}: `, h("b", null, C[key].toLocaleString()), ` (${pct(C[key] / C.total)})`))));
+      }
+      if (C.anyLabels) {
+        const cell = (n, src, keys, word) => {
+          const f = keys.reduce((a, k) => a + ((detBy[src] || {})[k]?.flag || 0), 0);
+          return h("td", "num", n.toLocaleString(), compDetect && n ? h("div", "muted", `${f.toLocaleString()} ${word}`) : null);
+        };
+        const head = ["Source", "Prompts", "Malicious", "Benign", "No label", "Labels from"].map((t, i) => h("th", i && i < 5 ? "num" : null, t));
+        const rows = C.bySource.map(x => h("tr", null, h("td", "src", x.label), h("td", "num", x.total.toLocaleString()),
+          cell(x.malicious + x.unauthorized, x.key, ["malicious", "unauthorized"], "caught"),
+          cell(x.benign + x.allowed, x.key, ["benign", "allowed"], "false pos."),
+          cell(x.unlabeled + x.unclear, x.key, ["unlabeled", "unclear"], "flagged"), h("td", null, x.how)));
+        parts.push(h("div", "tw", h("table", null, h("thead", null, h("tr", null, ...head)), h("tbody", null, ...rows))));
+        if (C.unlabeledSources.length)
+          parts.push(h("div", "warnbox", icon("alert"), h("div", null, h("b", null, `No labels in ${C.unlabeledSources.map(x => x.label).join(", ")}. `),
+            `Results for ${C.unlabeledSources.length === 1 ? "this source" : "these sources"} rely on ${relies}.`)));
+      }
+      box.replaceChildren(...parts);
+    };
+    draw();
+    return box;
   }
 
   // The plain-language answer: what the test found, in sentences, before any chart.
-  function glance(m) {
+  function glance(m, showPrompts) {
     const S = m.summary.all, L = m.latency, A = m.agent, b = t => h("b", null, t);
     const p = (...k) => h("p", null, ...k), note = (...k) => h("p", "muted", ...k);
+    const show = (n, state, what) => { if (!n) return null; const a = h("button", "linkbtn", `Show ${what}`); a.type = "button"; a.addEventListener("click", () => showPrompts({ state })); return [" ", a]; };
     const lines = [];
     if (S.expected) lines.push(p("Lakera caught ", b(`${S.caught.toLocaleString()} of the ${plural(S.expected, "prompt", "prompts")}`), " it should have flagged (", b(pct(S.effective)), ")",
-      S.missed ? `; ${plural(S.missed, "was", "were")} missed` : "", "."));
-    if (S.cleanChecked) lines.push(p("It wrongly flagged ", b(`${S.falseFlags.toLocaleString()} of the ${plural(S.cleanChecked, "prompt", "prompts")}`), " it should have let through (", b(pct(S.falseFlagRate)), ")."));
+      S.missed ? `; ${plural(S.missed, "was", "were")} missed` : "", ".", ...(show(S.missed, "missed", "missed") || [])));
+    if (S.cleanChecked) lines.push(p("It wrongly flagged ", b(`${S.falseFlags.toLocaleString()} of the ${plural(S.cleanChecked, "prompt", "prompts")}`), " it should have let through (", b(pct(S.falseFlagRate)), ").", ...(show(S.falseFlags, "false", "false alarms") || [])));
     if (!S.expected && !S.cleanChecked)
       lines.push(p("Lakera flagged ", b(`${m.flagged.toLocaleString()} of ${plural(m.ok, "prompt", "prompts")}`), ` (${pct(m.detectionRate)}).`),
                  note("None of these prompts has a label, scenario or judge verdict, so the report can't tell right flags from wrong ones. Use labeled datasets or add a judge model to find out."));
@@ -683,7 +745,7 @@
                            f.judge && `${f.judge.toLocaleString()} from the judge`].filter(Boolean).join(", ");
     const truthHow = `"Should be flagged" comes from, in order: the dataset label, the agent scenario, or the judge (malicious or containing personal data).`;
     const needTruth = "Needs labeled prompts or a judge";
-    const overview = tileGroup("Overview", null,
+    const overview = tileGroup("Volume", null,
       tile({ label: "Prompts checked", value: m.ok.toLocaleString(), meaning: "answered by Lakera",
              detail: `${m.total.toLocaleString()} sent · ${m.errors.length.toLocaleString()} failed`, explain: [
         `${m.total.toLocaleString()} prompts were sent to Lakera; ${m.ok.toLocaleString()} came back with detector results.`,
@@ -691,7 +753,7 @@
       tile({ label: "Detection rate", value: pct(m.detectionRate), meaning: "flagged, right or wrong",
              detail: `${m.flagged.toLocaleString()} of ${m.ok.toLocaleString()} flagged`, explain: [
         `Flagged ÷ checked = ${m.flagged.toLocaleString()} ÷ ${m.ok.toLocaleString()} = ${pct(m.detectionRate)}.`,
-        `A prompt is flagged when at least one detector reports L1–L${k}. This number mostly reflects how many attacks the test contains, so it's neither good nor bad on its own. The effective detection rate and the false alarm rate show whether the right prompts were flagged.`] }),
+        `A prompt is flagged when at least one detector reports L1–L${k}. This number mostly reflects how many attacks the test contains, so it's neither good nor bad on its own. The effective detection rate and the false positive rate show whether the right prompts were flagged.`] }),
       tile({ label: "Not flagged", value: m.bypass.length.toLocaleString(), meaning: "let through (bypass candidates)",
              detail: "benign prompts belong here", explain: [
         `Checked prompts where no detector reported L1–L${k}: ${m.ok.toLocaleString()} checked − ${m.flagged.toLocaleString()} flagged = ${m.bypass.length.toLocaleString()}.`,
@@ -700,10 +762,10 @@
     const f = S.truthFrom, srcs = [f.label && `the dataset labels (${plural(f.label, "prompt", "prompts")})`,
       f.scenario && `the agent scenarios (${f.scenario.toLocaleString()})`, f.judge && `the judge (${f.judge.toLocaleString()})`].filter(Boolean);
     const truthNote = S.expected || S.cleanChecked
-      ? `Whether each prompt should be flagged (used here and under "Avoiding false alarms") comes from ${srcs.length > 1 ? srcs.slice(0, -1).join(", ") + " and " + srcs[srcs.length - 1] : srcs[0]}.` +
+      ? `Whether each prompt should be flagged comes from ${srcs.length > 1 ? srcs.slice(0, -1).join(", ") + " and " + srcs[srcs.length - 1] : srcs[0]}.` +
         (S.unknown ? ` ${plural(S.unknown, "prompt has", "prompts have")} none of these and ${S.unknown === 1 ? "is" : "are"} left out.` : "")
       : null;
-    const catching = tileGroup("Catching threats", truthNote,
+    const catching = [
       S.expected
         ? tile({ label: "Effective detection rate", value: pct(S.effective), meaning: "threats caught", better: "higher",
                  detail: `${S.caught.toLocaleString()} of ${S.expected.toLocaleString()} caught` + (S.expErrors ? ` · ${plural(S.expErrors, "failed check", "failed checks")} counted as missed` : ""), explain: [
@@ -715,19 +777,21 @@
       A && tile({ label: "Unauthorized Action Success Rate", value: pct(A.uasr), meaning: "unauthorized tool calls let through", better: "lower",
                   detail: `${A.through.length} of ${A.unauthorized} got through`, explain: [
         `Unauthorized tool calls not flagged ÷ unauthorized tool calls = ${A.through.length} ÷ ${A.unauthorized} = ${pct(A.uasr)}.`,
-        `A flag from any detector counts as blocked, as it would in Enforce mode.` + (A.agentSeen ? "" : " This policy has no Agent Behavior detector, so only other detectors could flag these.")] }));
+        `A flag from any detector counts as blocked, as it would in Enforce mode.` + (A.agentSeen ? "" : " This policy has no Agent Behavior detector, so only other detectors could flag these.")] })];
 
-    const falseAlarms = tileGroup("Avoiding false alarms", null,
+    const falseAlarms = [
       S.cleanChecked
-        ? tile({ label: "False alarm rate", value: pct(S.falseFlagRate), meaning: "benign prompts flagged", better: "lower",
+        ? tile({ label: "False positive rate", value: pct(S.falseFlagRate), meaning: "benign prompts flagged", better: "lower",
                  detail: `${S.falseFlags.toLocaleString()} of ${S.cleanChecked.toLocaleString()} flagged`, explain: [
             `Flagged ÷ prompts that should be let through = ${S.falseFlags.toLocaleString()} ÷ ${S.cleanChecked.toLocaleString()} = ${pct(S.falseFlagRate)}.`, truthHow,
             `Failed checks are left out here, since a failed check flags nothing.`] })
-        : tile({ label: "False alarm rate", value: needTruth, off: true, explain: [
+        : tile({ label: "False positive rate", value: needTruth, off: true, explain: [
             "Flagged ÷ prompts that should be let through. It needs prompts known to be benign: a Benign preset, a labeled dataset, or a judge."] }),
       A && tile({ label: "Allowed actions blocked", value: pct(A.falseBlock), meaning: "legitimate tool calls flagged", better: "lower",
                   detail: `${A.blocked.length} of ${A.allowed} flagged`, explain: [
-        `Legitimate tool calls flagged ÷ legitimate tool calls = ${A.blocked.length} ÷ ${A.allowed} = ${pct(A.falseBlock)}.`] }));
+        `Legitimate tool calls flagged ÷ legitimate tool calls = ${A.blocked.length} ÷ ${A.allowed} = ${pct(A.falseBlock)}.`] })];
+    // Caught and false alarms side by side: the two numbers that say whether the right prompts were flagged.
+    const accuracy = tileGroup("Accuracy: did Lakera flag the right prompts?", truthNote, catching[0], falseAlarms[0], catching[1], falseAlarms[1]);
 
     // The judge's own view: every metric here uses only its verdicts, so it can differ from the dataset labels above.
     const judgeNote = J ? `These use only the judge's verdicts: it called ${plural(J.attacks, "prompt", "prompts")} malicious and ${J.sensitive.toLocaleString()} as containing personal data, out of ${J.n.toLocaleString()} judged.` +
@@ -744,7 +808,7 @@
              detail: `${J.confusion.tp} of ${J.confusion.tp + J.confusion.fp} flags`, explain: [
         `Flags the judge agrees with ÷ all flags on judged prompts = ${J.confusion.tp} ÷ ${J.confusion.tp + J.confusion.fp} = ${pct(J.precision)}.`,
         `A flag counts as right when the judge says the prompt is malicious or contains personal data, since flagging personal data is the DLP detectors' job.`] }),
-      tile({ label: "False Positive Rate", value: pct(J.fpr), meaning: "benign prompts flagged", better: "lower",
+      tile({ label: "False Positive Rate (judge)", value: pct(J.fpr), meaning: "benign prompts flagged", better: "lower",
              detail: `${J.confusion.fp} of ${J.confusion.fp + J.confusion.tn} flagged`, explain: [
         `Flagged ÷ prompts the judge calls benign = ${J.confusion.fp} ÷ ${J.confusion.fp + J.confusion.tn} = ${pct(J.fpr)}. Benign here means neither malicious nor containing personal data.`] }),
       tile({ label: "Sensitive Data Leakage", value: pct(J.leakage), meaning: "personal data the DLP missed", better: "lower", mark: gearMark(),
@@ -752,7 +816,7 @@
         `Prompts the judge says contain personal data, where no Data Leakage (DLP) detector reported L1–L${k} ÷ prompts with personal data = ${J.leaked.length} ÷ ${J.sensitive} = ${pct(J.leakage)}.`,
         `The gear marks a customization item: Lakera's built-in DLP covers 8 mostly-US types (names, US addresses and phones, emails, IPs, cards, IBANs, US SSNs). Other formats need custom regex or guardrails in your Lakera project policy.`] })) : null;
 
-    const speed = L.n ? tileGroup("Speed", null,
+    const speed = L.n ? tileGroup("Latency", null,
       tile({ label: "Average response time", value: ms(L.avg), meaning: "round trip per prompt (RTT)", better: "lower",
              detail: `over ${plural(L.n, "answer", "answers")}`, explain: [
         `The mean time from sending a prompt until Lakera's answer arrived, over the ${L.n.toLocaleString()} answered prompts: ${ms(L.avg)}.`,
@@ -761,18 +825,20 @@
         `The single slowest answered prompt: ${ms(L.max)}${L.maxRec ? ` (${srcId(L.maxRec.id)})` : ""}. Measured the same way as the average.`] })) : null;
 
     const hints = [];
-    if (!J) hints.push(h("p", null, h("b", null, "Want more detail? "), "Add a judge model on the Run tab to also get Attack Success Rate, Attack Recall, Precision, False Positive Rate and Sensitive Data Leakage, measured on every prompt, even unlabeled ones."));
+    if (!J) hints.push(h("p", null, h("b", null, "Want more detail? "), "Add a judge model on the Run tab to also get Attack Success Rate, Attack Recall, Precision, False Positive Rate (judge) and Sensitive Data Leakage, measured on every prompt, even unlabeled ones."));
     if (J) hints.push(h("p", null, h("b", null, `Judge${meta.judge_model ? ` (${meta.judge_model})` : ""}: `), `${plural(J.n, "prompt", "prompts")} judged`,
       J.errors ? `, ${J.errors} judge errors left out` : "", J.unjudged ? `, ${J.unjudged} not judged` : "", ". Its verdicts are a second opinion, not ground truth."));
     if (!A) hints.push(h("p", null, h("b", null, "Testing AI agents? "), "Add the agent scenarios (Choose prompts → Agent tool calls) and use a Lakera project whose policy enables Dangerous Deviation or a tool allow/deny list."));
     const note = h("div", "card note", ...hints);
 
     // ---- All prompts (built first so charts and summary rows can open it filtered) ----
-    const fState = h("select"), fSrc = h("select"), fText = h("input"), fLabel = h("select"), fGroup = h("select");
+    const fState = h("select"), fSrc = h("select"), fText = h("input"), fLabel = h("select"), fGroup = h("select"), fJudge = h("select");
     const opt = (sel, v, t) => { const o = h("option", null, t); o.value = v; sel.append(o); };
-    for (const [v, t] of [["all", "All"], ["flag", "Flagged"], ["pass", "Not flagged"], ["err", "Failed"]]) opt(fState, v, t);
+    for (const [v, t] of [["all", "All"], ["flag", "Flagged"], ["pass", "Not flagged"], ["err", "Failed"], ["missed", "Missed threats"], ["false", "False alarms"]]) opt(fState, v, t);
     opt(fSrc, "", "All sources"); for (const s of m.summary.bySource) opt(fSrc, s.key, s.label);
     for (const [v, t] of [["", "All"], ["malicious", "Malicious"], ["benign", "Benign"], ["none", "No label"]]) opt(fLabel, v, t);
+    for (const [v, t] of [["", "All"], ["flag", "Should be flagged"], ["pass", "Should be let through"], ["none", "Not judged"]]) opt(fJudge, v, t);
+    const judgeIs = r => (!r.judge || r.judge.error ? "none" : r.judge.malicious || r.judge.sensitive_data ? "flag" : "pass");
     opt(fGroup, "", "Any"); for (const g of m.groups) opt(fGroup, g, "Flagged by " + (GROUPS[g] || g));
     fText.placeholder = "Search prompt text"; fText.type = "search"; fText.setAttribute("aria-label", "Search prompt text");
     const out = h("div");
@@ -780,21 +846,25 @@
       const q = fText.value.toLowerCase();
       const list = run.records.filter(r => (!fSrc.value || r.source === fSrc.value) && (!q || r.prompt.toLowerCase().includes(q)) &&
         (!fLabel.value || (fLabel.value === "none" ? !r.label : r.label === fLabel.value)) &&
-        (!fGroup.value || (!r.error && hit((r.groups || {})[fGroup.value], k))) &&
-        ({ all: true, flag: !r.error && m.isFlag(r), pass: !r.error && !m.isFlag(r), err: !!r.error })[fState.value]);
+        (!fGroup.value || (!r.error && hit((r.groups || {})[fGroup.value], k))) && (!fJudge.value || judgeIs(r) === fJudge.value) &&
+        ({ all: true, flag: !r.error && m.isFlag(r), pass: !r.error && !m.isFlag(r), err: !!r.error,
+           missed: !!truthOf(r)?.should && (!!r.error || !m.isFlag(r)), // same rule as the effective detection rate
+           false: truthOf(r)?.should === false && !r.error && m.isFlag(r) })[fState.value]);
       out.replaceChildren(h("p", "muted", `${list.length.toLocaleString()} of ${plural(m.total, "prompt", "prompts")} match`),
                           list.length ? caseTable(list, m, 500) : h("p", "muted", "No prompts match these filters."));
     };
-    for (const c of [fState, fSrc, fLabel, fGroup]) c.addEventListener("change", refilter);
+    for (const c of [fState, fSrc, fLabel, fGroup, fJudge]) c.addEventListener("change", refilter);
+    // Confusion-table cell -> All prompts filtered to that cell (failed checks are in neither column).
+    const cellFilter = key => ({ state: key === "tp" || key === "fp" ? "flag" : "pass", truth: key === "tp" || key === "fn" });
     fText.addEventListener("input", refilter);
     const allSec = section("all", `All prompts · ${m.total.toLocaleString()}`, { open: false, explain: [
       `Every prompt in the test. Use the filters, or click a row in "Results by source" or a bar in the charts to land here filtered.`,
       `Click a prompt to see its full text (or agent conversation), what each detector reported, the dataset label, the judge's verdict and the raw JSON. Up to 500 are listed at a time.`] },
       h("div", "filters", h("label", null, "Result", fState), h("label", null, "Source", fSrc), h("label", null, "Detector", fGroup),
-        h("label", null, "Dataset label", fLabel), h("label", null, "Search", fText)), out);
+        h("label", null, "Dataset label", fLabel), J ? h("label", null, "Judge", fJudge) : null, h("label", null, "Search", fText)), out);
     refilter();
-    const showPrompts = ({ source = "", group = "", state = "all" } = {}) => {
-      fSrc.value = source; fGroup.value = group; fState.value = state; fLabel.value = ""; fText.value = "";
+    const showPrompts = ({ source = "", group = "", state = "all", label = "", judge = "" } = {}) => {
+      fSrc.value = source; fGroup.value = group; fState.value = state; fLabel.value = label; fJudge.value = judge; fText.value = "";
       refilter(); allSec.setOpen(true); allSec.scrollIntoView({ behavior: "smooth", block: "start" });
     };
 
@@ -802,21 +872,22 @@
     const compSec = sec("composition", "Dataset composition", {
       sub: C.anyLabels ? `What the ${plural(C.total, "test prompt", "test prompts")} are, according to the datasets themselves (not the judge).` : null,
       explain: [`Counts come only from the datasets: a label column, a whole dataset marked malicious or benign, or an agent scenario's expected outcome. The judge's verdicts are not counted here, because they're a model's opinion.`,
-                `Prompts whose label value isn't malicious or benign, and prompts from sources without labels, count as "No label". Their results rest on the judge (if one is set) or only on what Lakera flagged.`] },
-      ...compositionView(C, !!J));
-    const parts = [head, glance(m), compSec, gloss, overview, catching, falseAlarms, judgeView, speed, note];
+                `Prompts whose label value isn't malicious or benign, and prompts from sources without labels, count as "No label". Their results rest on the judge (if one is set) or only on what Lakera flagged.`,
+                `Check detection results overlays Lakera's result on each part: solid = flagged, faded = not flagged, grey = the check failed. For labeled parts, flagged malicious prompts are caught and flagged benign ones are false positives.`] },
+      compositionView(C, !!J, run.records, m.isFlag, showPrompts));
+    const parts = [head, glance(m, showPrompts), compSec, gloss, accuracy, overview, judgeView, speed, note];
     parts.push(sec("summary", "Results by source", {
       sub: "The total first, then each dataset or file. Click a row to list its prompts.",
-      explain: [`Detection rate = flagged ÷ checked. Effective detection rate = caught ÷ should be flagged, with failed checks counted as missed. False alarm rate = false alarms ÷ prompts that should be let through.`,
+      explain: [`Flagged = flagged ÷ checked (the detection rate). Threats caught = caught ÷ should be flagged (the effective detection rate), with failed checks counted as missed. False alarms = flagged ÷ prompts that should be let through (the false positive rate).`,
                 `"–" means that source has no prompts with a known right answer (no label, scenario or judge verdict).`] },
       summaryTable(m.summary, key => showPrompts({ source: key }))));
     if (LB) parts.push(h("div", "two",
       sec("labels", "Lakera vs the datasets' labels", {
         sub: "The datasets' own labels (a label column, or a whole dataset marked malicious or benign) against what Lakera did.",
-        explain: [`Rows are the dataset's label; columns are Lakera's result. Failed checks are left out.`,
+        explain: [`Rows are the dataset's label; columns are Lakera's result. Failed checks are left out. Click a number to list those prompts.`,
                   `Caught ${LB.confusion.tp} of ${LB.malicious} labeled malicious (${pct(LB.recall)}); falsely flagged ${LB.confusion.fp} of ${LB.benign} labeled benign (${pct(LB.fpr)}).` +
                   (LB.judged ? ` The judge agrees with the label on ${LB.judgeAgree} of the ${LB.judged} prompts it judged.` : "")] },
-        confusion(LB.confusion, ["Labeled malicious", "Labeled benign"]),
+        confusion(LB.confusion, ["Labeled malicious", "Labeled benign"], key => { const f = cellFilter(key); showPrompts({ state: f.state, label: f.truth ? "malicious" : "benign" }); }),
         LB.unknown || LB.judged ? h("p", "sub", cap([LB.unknown ? `${plural(LB.unknown, "prompt has", "prompts have")} a label value that isn't malicious or benign` : null,
           LB.judged ? `the judge agrees with the label on ${LB.judgeAgree} of ${LB.judged}` : null].filter(Boolean).join("; ")) + ".") : null),
       sec("disagree", `Where Lakera disagreed with the labels · ${(LB.missed.length + LB.falseFlags.length).toLocaleString()}`, {
@@ -836,9 +907,9 @@
     if (J) parts.push(h("div", "two",
       sec("judgeCm", "Lakera vs the judge", {
         sub: "The judge's verdict against what Lakera did.",
-        explain: [`Rows are the judge's verdict ("should be flagged" = malicious or containing personal data); columns are Lakera's result.`,
+        explain: [`Rows are the judge's verdict ("should be flagged" = malicious or containing personal data); columns are Lakera's result. Click a number to list those prompts.`,
                   `${plural(J.n, "prompt", "prompts")} judged; judge errors and failed checks are left out.`] },
-        confusion(J.confusion, ["Should be flagged (judge)", "Should be let through (judge)"])),
+        confusion(J.confusion, ["Should be flagged (judge)", "Should be let through (judge)"], key => { const f = cellFilter(key); showPrompts({ state: f.state, judge: f.truth ? "flag" : "pass" }); })),
       sec("judgeMissed", `Malicious prompts Lakera missed (judge) · ${J.missed.length}`, {
         open: false, sub: "The judge calls these malicious, but no detector flagged them. They make up the Attack Success Rate.",
         explain: [`Prompts the judge calls malicious where no detector reported L1–L${k}: ${J.missed.length} of ${J.attacks}.`] },
@@ -852,7 +923,7 @@
           bars(m.byGroup.map(g => ({ ...g, help: GROUP_HELP[g.key] })), g => showPrompts({ group: g }))),
         sec("bySource", "What was flagged, by source", {
           sub: `Share of each source's prompts that were flagged. Click a bar to list them.`,
-          explain: [`For each dataset or file: its flagged prompts ÷ its checked prompts (failed checks left out). "Results by source" adds the effective detection and false alarm rates.`] },
+          explain: [`For each dataset or file: its flagged prompts ÷ its checked prompts (failed checks left out). "Results by source" adds the effective detection and false positive rates.`] },
           bars(m.bySource.filter(s => s.of), s => showPrompts({ source: s, state: "flag" })))));
       parts.push(sec("latency", "Response time", {
         sub: `How long each answer took. Average ${ms(L.avg)}, slowest ${ms(L.max)}. Lakera Guardrails' own latency is on the Lakera portal; this shows round-trip time (RTT) only.`,

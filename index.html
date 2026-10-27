@@ -173,6 +173,14 @@
     #sel td:nth-child(5) { grid-column: 1; margin-top: 4px; }
     #sel td:nth-child(6) { grid-column: 2; align-self: end; }
   }
+  /* Phones: the page scrolls as a whole so the key/region header scrolls away; tabs and the chat box stay put. */
+  @media (max-width: 700px) {
+    body { height: auto; min-height: 100dvh; display: block; }
+    .tabs { position: sticky; top: 0; z-index: 10; }
+    main, #dataView, #runView, #reportView { overflow: visible; }
+    #chatView { min-height: 100dvh; } /* short chats still put the input at the bottom */
+    footer { position: sticky; bottom: 0; }
+  }
 </style>
 <script src="/report.js"></script>
 </head>
@@ -405,7 +413,7 @@ function el(tag, cls, text) {
   return e;
 }
 
-function scrollDown() { const m = document.querySelector("main"); m.scrollTop = m.scrollHeight; }
+function scrollDown() { const m = document.querySelector("main"); m.scrollTop = m.scrollHeight; scrollTo(0, document.body.scrollHeight); }
 
 function renderVerdict(box, r) {
   box.replaceChildren();
@@ -993,6 +1001,7 @@ function showTab(which) {
   for (const [t, v] of [["chat", "Chat"], ["data", "Data"], ["run", "Run"], ["report", "Report"]]) {
     $("tab" + v).setAttribute("aria-selected", t === which); $(t + "View").hidden = t !== which;
   }
+  const top = document.querySelector("header").offsetHeight; if (scrollY > top) scrollTo(0, top); // phones: start the new tab at its top
   if (which === "run") renderRunReady();
   if (which === "report") renderReportTab();
   store.set(ls, "tab", which);

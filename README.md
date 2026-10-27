@@ -35,11 +35,11 @@ New to guardrail testing? The app walks you through it: **Quick check** tries on
    - A warm-up call opens the connection first and isn't counted. If it gets a 401 or 403, the test stops before using quota.
    - **Stop** ends the test at any point and keeps every result. **Resume (N left)** tests the connection first, then checks only the prompts that hadn't finished (any that were in flight when you stopped are re-run). If the region or project changed, Resume asks first. **Start test** starts over and asks before discarding a stopped test.
 5. **3 Report:**
-   - **At a glance:** the answer in plain sentences, for example "Lakera caught 9 of the 23 prompts it should have flagged (39%)" and "It wrongly flagged 2 of the 24 prompts it should have let through (8%)", plus response time.
-   - **Dataset composition:** how many prompts each dataset labels malicious or benign (a bar plus a per-source table naming where the labels come from: a label column, a whole-dataset label or an agent scenario). If no selected dataset has labels, it says so instead: all results then rest on the judge model's verdicts or, without a judge, on what Lakera's guardrails flagged alone. Sources without labels in a mixed run are called out the same way.
+   - **At a glance:** the answer in plain sentences, for example "Lakera caught 9 of the 23 prompts it should have flagged (39%)" and "It wrongly flagged 2 of the 24 prompts it should have let through (8%)", plus response time. **Show missed** / **Show false alarms** list exactly those prompts.
+   - **Dataset composition:** how many prompts each dataset labels malicious or benign (a bar plus a per-source table naming where the labels come from: a label column, a whole-dataset label or an agent scenario). If no selected dataset has labels, it says so instead: all results then rest on the judge model's verdicts or, without a judge, on what Lakera's guardrails flagged alone. Sources without labels in a mixed run are called out the same way. **Check detection results** overlays Lakera's result on the bar (solid = flagged, faded = not flagged, grey = failed) and lists caught / missed / false positives per part, each with a link to those prompts.
    - **How to read this report:** a glossary (flagged, confidence levels L1–L5, each detector group, malicious/benign, threat, false alarm, judge, failed check, response time) and this run's details.
-   - Metrics grouped by question: **Overview**, **Catching threats**, **Avoiding false alarms**, **The judge's view** (judge-only metrics, kept apart because the judge can disagree with dataset labels) and **Speed**. Each says what it means and whether higher or lower is better; **ⓘ** shows how it's calculated with this run's numbers.
-   - **Results by source** (click a row to list its prompts), Lakera against the datasets' labels and against the judge (Caught / Missed / False alarm / Correctly let through), charts by detector and source, response times, prompts not flagged, and **All prompts** with filters. Click any prompt for its full text (or agent conversation), what each detector reported, the dataset label and the judge's verdict.
+   - Metrics grouped by question: **Accuracy** (effective detection rate and false positive rate side by side), **Volume**, **The judge's view** (judge-only metrics, kept apart because the judge can disagree with dataset labels) and **Latency**. Each says what it means and whether higher or lower is better; **ⓘ** shows how it's calculated with this run's numbers.
+   - **Results by source** (each rate with its counts; click a row to list its prompts), Lakera against the datasets' labels and against the judge (Caught / Missed / False alarm / Correctly let through; click a number to list those prompts), charts by detector and source, response times, prompts not flagged, and **All prompts** with filters. Click any prompt for its full text (or agent conversation), what each detector reported, the dataset label and the judge's verdict.
    - Sections fold (Expand all / Collapse all). **Download report (HTML)** gives an interactive offline file; **Download data (JSON)** the raw results.
 
 ## Endpoints
@@ -72,14 +72,14 @@ New to guardrail testing? The app walks you through it: **Quick check** tries on
 | Metric | Needs | Definition |
 |---|---|---|
 | Detection rate | — | flagged ÷ prompts screened successfully |
-| False alarm rate | dataset label, agent scenario or judge | prompts that should be let through but were flagged ÷ prompts that should be let through (failed checks left out) |
+| False positive rate | dataset label, agent scenario or judge | prompts that should be let through but were flagged ÷ prompts that should be let through (failed checks left out) |
 | Effective detection rate | dataset label, agent scenario or judge | should-flag prompts flagged ÷ all should-flag prompts; failed calls count as missed. "Should flag" comes from the dataset label (malicious), else the scenario (unauthorized), else the judge (malicious or sensitive data); prompts with none are left out |
 | Bypass candidates | — | prompts with flag = false (without a judge these are candidates, not confirmed misses) |
 | Avg RTT / Max latency | — | backend-measured round trip to Lakera, errors and warm-up excluded |
 | Attack Success Rate | judge | judged malicious & not flagged ÷ judged malicious |
 | Attack Recall | judge | judged malicious & flagged ÷ judged malicious |
 | Precision | judge | flagged & expected ÷ flagged, where expected = judged malicious **or** contains sensitive data |
-| False Positive Rate | judge | flagged & not expected ÷ not expected |
+| False Positive Rate (judge) | judge | flagged & not expected ÷ not expected |
 | Sensitive Data Leakage ⚙ | judge | contains sensitive data & no DLP detector flagged ÷ contains sensitive data |
 | Unauthorized Action Success Rate | agent scenarios | `expected: unauthorized` & not flagged ÷ unauthorized scenarios (a flag from any detector counts as blocked, as Enforce mode would) |
 | Allowed actions blocked | agent scenarios | `expected: allowed` & flagged ÷ allowed scenarios |
