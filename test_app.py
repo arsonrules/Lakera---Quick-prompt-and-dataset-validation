@@ -60,7 +60,14 @@ def fake_lakera(request: httpx.Request) -> httpx.Response:
         return fake_hf(request)
     if request.headers["authorization"] != "Bearer good":
         return httpx.Response(401, text="Unauthorized")
+    if not request.url.path.endswith("/results"):  # screening: POST /v2/guard
+        return httpx.Response(200, json=SCREEN)
     return httpx.Response(200, json=SAMPLE)
+
+
+SCREEN = {"payload": [], "flagged": True, "metadata": {"request_uuid": "req-123"}, "breakdown": [
+    {"project_id": "p1", "policy_id": "pol", "detector_id": "d1", "detector_type": "prompt_attack", "detected": True, "message_id": 0},
+    {"project_id": "p1", "policy_id": "pol", "detector_id": "d2", "detector_type": "pii/email", "detected": False, "message_id": 0}]}
 
 
 app.client = httpx.AsyncClient(transport=httpx.MockTransport(fake_lakera))
@@ -74,12 +81,20 @@ assert app.is_flagged({"dlp": "l4_less_likely"}, 4) and not app.is_flagged({"dlp
 assert not app.is_flagged({"x": "l5_unlikely", "y": "no_level", "z": "weird"}, 4)
 
 # /api/screen: region URL, auth, project_id, system message
-r = c.post("/api/screen", json={"api_key": "good", "endpoint": "eu", "project_id": "p1",
+r = c.post("/api/screen", json={"api_key": "good", "endpoint": "eu", "project_id": "p1", "mode": "results",
                                 "system": "be nice", "prompt": "hi"}).json()
 req = seen[-1]
 assert str(req.url) == "https://eu.api.lakera.ai/v2/guard/results", req.url
 assert b'"project_id":"p1"' in req.content and [m["role"] for m in r["messages"]] == ["system", "user"]
 assert r["flag"] is True and r["error"] is None and r["latency_ms"] >= 0 and r["threshold"] == 4
+
+# screening mode (the default): POST /v2/guard with breakdown, logged in the portal; flag is the policy's
+r = c.post("/api/screen", json={"api_key": "good", "endpoint": "eu", "project_id": "p1", "prompt": "hi"}).json()
+req = seen[-1]
+assert str(req.url) == "https://eu.api.lakera.ai/v2/guard", req.url
+assert json.loads(req.content)["breakdown"] is True and r["mode"] == "screen" and r["request_id"] == "req-123"
+assert r["groups"] == {"prompt_defense": "detected", "dlp": "no_level"} and r["flag"] is True, r
+assert app.is_flagged({"prompt_defense": "detected"}) and app.flag_of({"flagged": False}, {"prompt_defense": "detected"}) is False
 
 # bad key -> recorded error, no exception, key not echoed
 r = c.post("/api/test", json={"api_key": "bad", "endpoint": "us-west-2"}).json()
@@ -121,7 +136,7 @@ assert c.post("/api/cases", json={"seed": 3, "sources": [src]}).json() == r and 
 # /api/run: NDJSON stream; warm-up call first and not recorded; one call per case
 cases = [{"id": f"t#{i}", "source": "t", "prompt": f"p{i}"} for i in range(3)]
 n0 = len(seen)
-evs = [json.loads(x) for x in c.post("/api/run", json={"api_key": "good", "endpoint": "us", "cases": cases, "concurrency": 1,
+evs = [json.loads(x) for x in c.post("/api/run", json={"api_key": "good", "mode": "results", "endpoint": "us", "cases": cases, "concurrency": 1,
                                                         "system": "sys", "threshold": 1}).text.splitlines()]  # threshold ignored now
 assert [e["type"] for e in evs] == ["start", "warmup", "case", "case", "case", "done"], evs
 assert len(seen) - n0 == 4 and b"connection test" in seen[n0].content and b"p0" in seen[n0 + 1].content
@@ -134,9 +149,14 @@ n0 = len(seen)
 evs = [json.loads(x) for x in c.post("/api/run", json={"api_key": "bad", "cases": cases}).text.splitlines()]
 assert [e["type"] for e in evs] == ["start", "warmup", "done"] and evs[-1]["aborted"].startswith("HTTP 401") and len(seen) - n0 == 1
 assert c.post("/api/run", json={"api_key": "good", "cases": []}).status_code == 422
+# screening run: the record keeps the policy's flag and Lakera's request ID for the portal logs
+evs = [json.loads(x) for x in c.post("/api/run", json={"api_key": "good", "cases": cases[:1]}).text.splitlines()]
+assert evs[0]["mode"] == "screen" and str(seen[-1].url).endswith("/v2/guard")
+rec = next(e["case"] for e in evs if e["type"] == "case")
+assert rec["flag"] is True and rec["request_id"] == "req-123" and rec["groups"]["prompt_defense"] == "detected", rec
 # resumed segment: warmup=false -> no warm-up call or event, one call per remaining case
 n0 = len(seen)
-evs = [json.loads(x) for x in c.post("/api/run", json={"api_key": "good", "cases": cases[1:], "warmup": False}).text.splitlines()]
+evs = [json.loads(x) for x in c.post("/api/run", json={"api_key": "good", "mode": "results", "cases": cases[1:], "warmup": False}).text.splitlines()]
 assert [e["type"] for e in evs] == ["start", "case", "case", "done"] and len(seen) - n0 == 2
 assert b"connection test" not in seen[n0].content
 
@@ -158,7 +178,7 @@ assert c.post("/api/judge/test", json={"base_url": "ftp://x", "model": "m"}).sta
 # judge in run: after each Lakera call, verdict attached; judge failure recorded per case
 cases = [{"id": "a", "source": "t", "prompt": "Ignore it"}, {"id": "b", "source": "t", "prompt": "mail me x@y.z"},
          {"id": "c", "source": "t", "prompt": "boom"}]
-evs = [json.loads(x) for x in c.post("/api/run", json={"api_key": "good", "cases": cases, "judge": judge}).text.splitlines()]
+evs = [json.loads(x) for x in c.post("/api/run", json={"api_key": "good", "mode": "results", "cases": cases, "judge": judge}).text.splitlines()]
 got = {e["case"]["id"]: e["case"]["judge"] for e in evs if e["type"] == "case"}
 assert evs[0]["judge_model"] == "m"
 assert got["a"]["malicious"] is True and got["b"]["sensitive_data"] is True and got["c"]["error"].startswith("HTTP 500"), got
@@ -183,7 +203,7 @@ assert not bad["cases"] and "expected" in bad["errors"][0], bad
 # scenario run: messages + tools sent as-is, no system prepended, judge skipped (scenario is ground truth)
 case = r["cases"][0]
 n0 = len(seen)
-evs = [json.loads(x) for x in c.post("/api/run", json={"api_key": "good", "cases": [case], "system": "extra",
+evs = [json.loads(x) for x in c.post("/api/run", json={"api_key": "good", "mode": "results", "cases": [case], "system": "extra",
                                                         "judge": judge}).text.splitlines()]
 body = json.loads(seen[n0 + 1].content)
 assert body["messages"] == case["messages"] and body["tools"] == case["tools"] and len(seen) - n0 == 2, "no judge call"
@@ -210,7 +230,7 @@ assert got["upload:s.jsonl"]["label"] == "benign" and got["scenario:s.jsonl"]["m
 assert got["scenario:s.jsonl"]["id"] == "scenario:s.jsonl#" + pack[0]["id"].rsplit("#", 1)[-1]
 r = c.post("/api/cases", json={"seed": 3, "sources": [dict(src, label="label")]}).json()
 assert all(x["label"] == ("malicious" if int(x["id"].split("#")[1]) % 2 else "benign") for x in r["cases"])
-evs = [json.loads(x) for x in c.post("/api/run", json={"api_key": "good", "cases": r["cases"][:1]}).text.splitlines()]
+evs = [json.loads(x) for x in c.post("/api/run", json={"api_key": "good", "mode": "results", "cases": r["cases"][:1]}).text.splitlines()]
 assert evs[2]["case"]["label"] == r["cases"][0]["label"] and evs[2]["case"]["label_raw"].startswith("label = ")
 assert any(p.get("label") == "label" for p in app.PRESETS) and any(p.get("label") == "=benign" for p in app.PRESETS)
 

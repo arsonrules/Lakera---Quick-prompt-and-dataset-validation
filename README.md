@@ -1,6 +1,6 @@
 # Lakera Guard Tester
 
-A local web UI for testing Lakera Guard (Check Point AI Guardrails) detection. It needs no model endpoint: every prompt is screened with `POST /v2/guard/results`. The report is built from the confidence levels that endpoint returns, and you can export it as an interactive, offline HTML file.
+A local web UI for testing Lakera Guard (Check Point AI Guardrails) detection. It needs no model endpoint. Pick the **API** in the header: **Screening (logged)**, the default, sends real screening requests (`POST /v2/guard` with `breakdown: true`) that show up in the Lakera portal's logs; **Raw results (L1–L5)** uses `POST /v2/guard/results`, which returns confidence levels but isn't logged. The report is built from what the chosen endpoint returns, and you can export it as an interactive, offline HTML file.
 
 ## Quick start
 
@@ -21,10 +21,11 @@ docker run --rm -p 127.0.0.1:8765:8765 -v "$PWD/data:/app/data" lakera-guard-tes
 New to guardrail testing? The app walks you through it: **Quick check** tries one prompt; then **1 Choose prompts → 2 Run test → 3 Report**. A tick appears on each step once it's done.
 
 1. **Top bar:** your Lakera API key, the region, and an optional project ID (blank uses Lakera's default policy, which runs every detector). **Test connection** checks the key, and the lock note confirms keys stay in this browser tab.
-2. **Quick check:** type any prompt, or click an example (prompt injection, normal question, personal data, suspicious link). The answer says in plain words whether Lakera flagged it, which detector caught it, how sure it was (for example "L3 likely") and what that detector looks for.
+2. **Quick check:** type any prompt, or click an example (prompt injection, normal question, personal data, suspicious link). The answer says in plain words whether Lakera flagged it, which detector caught it, how sure it was (for example "L3 likely") and what that detector looks for. Found a miss or a false alarm worth keeping? **Add it as: Attack / Normal prompt** puts it in a labeled "Saved from Quick check" source, so every batch run re-tests it.
 3. **1 Choose prompts:**
    - **Use the recommended starter set** adds 100 labeled prompts (attacks and normal prompts) and builds the test set in one click.
    - Or pick sources yourself: **presets** grouped by what Lakera should do with them (Labeled mix, Attacks, Harmful content, Benign, Personal data, Agent tool calls); click a preset to add it and again to remove it. You can also use **downloaded datasets**, **Hugging Face search** (with an optional token) or **upload a file**.
+   - **Paste prompts** takes one prompt per line (duplicates dropped) and labels them as attacks, normal prompts or unlabeled.
    - For each source choose how many prompts to use at random, or tick **All**. The **random seed** makes the picks repeatable, and adding a source never reshuffles the others.
    - "All" is limited to 500,000 rows per source. Small Hugging Face samples are read through its dataset viewer (100 rows per request). That API rate-limits hard (429), even with a token, so a sample that would need more than 10 requests downloads the whole split once as Parquet into `data/` instead: a few requests, and later builds read it from disk. Builds and runs over 10,000 prompts ask for confirmation first.
    - **Build test set** shows what you got, for example "37 labeled malicious, 63 labeled benign". Download it as **.jsonl** (every field; upload it again to rerun exactly the same prompts) or **.csv** (for spreadsheets; cells starting with `=`, `+`, `-` or `@` get a leading `'` so they can't run as formulas).
@@ -33,6 +34,8 @@ New to guardrail testing? The app walks you through it: **Quick check** tries on
    - Optional **system prompt**, sent with every prompt the way your app would send it.
    - **Parallel checks** (1–16, default 4). Lakera publishes no per-second rate limit (only a `429` response, and 10,000 requests a month on Community plans), so on a `429` the test halves its parallel checks, pauses for the server's `Retry-After` (1 s if absent) and retries that prompt once. A second `429`, or any other error, is recorded on the prompt and the test continues. More parallel checks finish sooner but can make each answer slower.
    - A warm-up call opens the connection first and isn't counted. If it gets a 401 or 403, the test stops before using quota.
+   - While it runs: **Time left** (from the current pace) and the progress in the browser tab's title, so you can work in another tab. Closing or reloading the page mid-test, or with 50+ results you haven't downloaded, asks first: results live only in this tab.
+   - **Retry failed checks** re-checks only the prompts whose check failed (for example a rate limit), after a connection test.
    - **Stop** ends the test at any point and keeps every result. **Resume (N left)** tests the connection first, then checks only the prompts that hadn't finished (any that were in flight when you stopped are re-run). If the region or project changed, Resume asks first. **Start test** starts over and asks before discarding a stopped test.
 5. **3 Report:**
    - **At a glance:** the answer in plain sentences, for example "Lakera caught 9 of the 23 prompts it should have flagged (39%)" and "It wrongly flagged 2 of the 24 prompts it should have let through (8%)", plus response time. **Show missed** / **Show false alarms** list exactly those prompts.
@@ -41,6 +44,8 @@ New to guardrail testing? The app walks you through it: **Quick check** tries on
    - Metrics grouped by question: **Accuracy** (effective detection rate and false positive rate side by side), **Volume**, **The judge's view** (judge-only metrics, kept apart because the judge can disagree with dataset labels) and **Latency**. Each says what it means and whether higher or lower is better; **ⓘ** shows how it's calculated with this run's numbers.
    - **Results by source** (each rate with its counts; click a row to list its prompts), Lakera against the datasets' labels and against the judge (Caught / Missed / False alarm / Correctly let through; click a number to list those prompts), charts by detector and source, response times, prompts not flagged, and **All prompts** with filters. Click any prompt for its full text (or agent conversation), what each detector reported, the dataset label and the judge's verdict.
    - Sections fold (Expand all / Collapse all). **Download report (HTML)** gives an interactive offline file; **Download data (JSON)** the raw results.
+   - **Open saved report…** reopens either download (.json or .html) here.
+   - **Compare** puts two runs side by side, for example before and after changing your project's policy or region: **Compare with previous test** (the run before this one in this tab) or **Compare with a saved report…**. A "Compared with" section shows each headline rate for both runs with the change marked better or worse, then exactly which prompts changed: now caught, now missed, false alarms fixed, new false alarms. Prompts are matched by id, so build both test sets from the same sources with the same random seed (or re-upload the downloaded .jsonl). Prompts whose check failed in either run aren't compared.
 
 ## Endpoints
 
@@ -58,7 +63,9 @@ New to guardrail testing? The app walks you through it: **Quick check** tries on
 
 ## How the flag and metrics are calculated
 
-`/v2/guard/results` returns a confidence level for each detector and makes no flagging decision. The levels are `l1_confident` … `l5_unlikely` and `no_level`. This tool works out the flag itself:
+**Screening mode** (`/v2/guard`): the flag is Lakera's own decision under your project policy (`flagged`), and the breakdown says which detectors fired (shown as "detected by your policy", with no confidence level). Each record keeps Lakera's request ID, shown in the prompt detail, to find it in the portal logs.
+
+**Raw results mode:** `/v2/guard/results` returns a confidence level for each detector and makes no flagging decision. The levels are `l1_confident` … `l5_unlikely` and `no_level`. This tool works out the flag itself:
 
 - **Flag:** any detector reports a level from l1 to l4, the same cut-off as Lakera's default policy sensitivity. It's fixed, not configurable; set the real sensitivity in your project's policy.
 - **Detector groups:** results are grouped by prefix:
@@ -142,7 +149,7 @@ Lakera's built-in PII detectors cover 8 types: full name, US mailing address, US
 
 - **No end-to-end attack success.** No model is called, so "Attack Success Rate" means the guardrail was bypassed, not that the attack worked.
 - **Rate limits.** Lakera documents no numeric rate limit, so the run can only react to `429`s (halve concurrency, pause, retry once); it can't stay under a limit it doesn't know. HF's dataset viewer rate-limits anonymous use, so add an HF token or use local datasets for large samples.
-- **Not in the dashboard.** `/v2/guard/results` calls are not logged in the Lakera dashboard, and `/v2/guard` is never called.
+- **Portal logs only in Screening mode.** Raw results (`/v2/guard/results`) calls aren't logged in the Lakera portal; Screening (`/v2/guard`) calls are, and count as real screening traffic (they can trigger alerts and show in monitoring). Screening returns no confidence levels.
 - **Text only.** Images and audio are out of scope.
 - **Unknown detector names.** Detector types that aren't listed above land in "Other". A live run on 2026-10-15 (us-east-1, a project with 17 detectors) returned these, all grouped correctly:
   - `prompt_attack`

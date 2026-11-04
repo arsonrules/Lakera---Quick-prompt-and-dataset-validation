@@ -44,6 +44,8 @@ def group_of(detector_type: str) -> str:
 
 
 def rank(level: str) -> int:
+    if level == "detected":  # screening mode: the policy's yes/no, no confidence level
+        return 0
     return LEVELS.index(level) if level in LEVELS else len(LEVELS)
 
 
@@ -82,6 +84,9 @@ class Conn(BaseModel):
     api_key: str = Field(min_length=1)
     endpoint: Literal[tuple(ENDPOINTS)] = "community"
     project_id: str | None = None
+    # screen = POST /v2/guard: a real screening request, logged in the Lakera portal, flagged by the project policy.
+    # results = POST /v2/guard/results: raw confidence levels (L1–L5), not logged, no flag decision.
+    mode: Literal["screen", "results"] = "screen"
 
 
 class JudgeCfg(BaseModel):
@@ -97,27 +102,42 @@ class ScreenReq(Conn):
     judge: JudgeCfg | None = None
 
 
-async def call_results(conn: Conn, messages: list[dict], tools: list[dict] | None = None) -> dict:
-    """POST {endpoint}/results; never raises, the key is never echoed back."""
-    body = {"messages": messages}
+async def call_lakera(conn: Conn, messages: list[dict], tools: list[dict] | None = None) -> dict:
+    """POST {endpoint} (screening) or {endpoint}/results; never raises, the key is never echoed back.
+    Screening breakdowns are mapped to the /results shape with level "detected" or "no_level"."""
+    screen = conn.mode == "screen"
+    body = {"messages": messages, **({"breakdown": True} if screen else {})}
     if tools:
         body["tools"] = tools
     if conn.project_id:
         body["project_id"] = conn.project_id
     t0 = time.perf_counter()
+    flagged = request_id = None
     try:
         resp = await client.post(
-            ENDPOINTS[conn.endpoint][1] + "/results",
+            ENDPOINTS[conn.endpoint][1] + ("" if screen else "/results"),
             json=body,
             headers={"Authorization": f"Bearer {conn.api_key}"},
         )
         status, retry_after = resp.status_code, resp.headers.get("retry-after")
         error = None if status == 200 else f"HTTP {status}: {resp.text[:300]}"
-        results = resp.json().get("results", []) if error is None else []
+        data = resp.json() if error is None else {}
+        if screen:
+            results = [{"detector_type": b.get("detector_type", ""), "result": "detected" if b.get("detected") else "no_level",
+                        "message_id": b.get("message_id"), "detector_id": b.get("detector_id")} for b in data.get("breakdown", [])]
+            flagged = data.get("flagged") if error is None else None
+            request_id = (data.get("metadata") or {}).get("request_uuid")
+        else:
+            results = data.get("results", [])
     except (httpx.HTTPError, ValueError) as e:
         status, retry_after, error, results = None, None, f"{type(e).__name__}: {e}", []
     return {"latency_ms": round((time.perf_counter() - t0) * 1000, 1), "error": error, "results": results,
-            "status": status, "retry_after": retry_after}
+            "status": status, "retry_after": retry_after, "flagged": flagged, "request_id": request_id}
+
+
+def flag_of(r: dict, groups: dict[str, str]) -> bool:
+    """Screening: the policy's decision. Results: any detector at L1–L4."""
+    return r["flagged"] if r["flagged"] is not None else is_flagged(groups)
 
 
 JUDGE_SYSTEM = """You label prompts sent to an LLM application so a guardrail can be evaluated.
@@ -185,8 +205,8 @@ def endpoints():
 
 @app.post("/api/test")
 async def test_connection(conn: Conn):
-    r = await call_results(conn, [{"role": "user", "content": "connection test"}])
-    return {"ok": r["error"] is None, "endpoint": conn.endpoint, "url": ENDPOINTS[conn.endpoint][1],
+    r = await call_lakera(conn, [{"role": "user", "content": "connection test"}])
+    return {"ok": r["error"] is None, "endpoint": conn.endpoint, "url": ENDPOINTS[conn.endpoint][1], "mode": conn.mode,
             "latency_ms": r["latency_ms"], "error": r["error"], "detectors": len(r["results"])}
 
 
@@ -204,12 +224,12 @@ async def screen(req: ScreenReq):
             raise HTTPException(422, "prompt or messages required")
         messages = ([{"role": "system", "content": req.system}] if req.system else []) + [
             {"role": "user", "content": req.prompt}]
-    r = await call_results(req, messages)
+    r = await call_lakera(req, messages)
     groups = summarize(r["results"])
     user_text = "\n".join(m.get("content") or "" for m in messages if m.get("role") == "user" and isinstance(m.get("content"), str))
     judge = await call_judge(req.judge, user_text) if req.judge and not r["error"] else None
-    return {"endpoint": req.endpoint, "messages": messages, "threshold": FLAG_AT,
-            "flag": is_flagged(groups), "groups": groups, "judge": judge, **r}
+    return {"endpoint": req.endpoint, "mode": req.mode, "messages": messages, "threshold": FLAG_AT,
+            "flag": flag_of(r, groups), "groups": groups, "judge": judge, **r}
 
 
 # ---------- Datasets (phase 3) ----------
@@ -622,12 +642,12 @@ async def run_cases(req: RunReq):
     """NDJSON events: start, warmup, case..., done. Client cancels by aborting the request."""
     t0 = time.time()
     yield event(type="start", total=len(req.cases), endpoint=req.endpoint, url=ENDPOINTS[req.endpoint][1],
-                project_id=req.project_id, threshold=FLAG_AT, system=req.system,
+                project_id=req.project_id, mode=req.mode, threshold=FLAG_AT, system=req.system,
                 judge_model=req.judge.model if req.judge else None, concurrency=req.concurrency,
                 started_at=time.strftime("%Y-%m-%dT%H:%M:%S%z"))
     # Warm-up opens the TLS connection so the first case isn't charged for the handshake; not recorded.
     if req.warmup:
-        w = await call_results(req, [{"role": "user", "content": "connection test"}])
+        w = await call_lakera(req, [{"role": "user", "content": "connection test"}])
         yield event(type="warmup", latency_ms=w["latency_ms"], error=w["error"])
         if w["error"] and w["error"][5:8] in ("401", "403"):
             yield event(type="done", completed=0, errors=0, elapsed_s=round(time.time() - t0, 1), aborted=w["error"])
@@ -682,13 +702,14 @@ async def screen_case(req: RunReq, c: Case) -> tuple[dict, int | None, str | Non
     """One case -> (record, HTTP status, Retry-After). Never raises, so a worker can't stall the run."""
     messages = c.messages or ([{"role": "system", "content": req.system}] if req.system else []) + [
         {"role": "user", "content": c.prompt}]
-    r = await call_results(req, messages, c.tools)
+    r = await call_lakera(req, messages, c.tools)
     groups = summarize(r["results"])
     # Judge after the Lakera call so its time never counts as Lakera latency; skipped when Lakera failed
     # and for scenarios, which carry their own ground truth.
     judge = await call_judge(req.judge, c.prompt) if req.judge and not r["error"] and not c.expected else None
     rec = {**c.model_dump(exclude_none=True), "messages": messages, "lakera_results": r["results"], "groups": groups,
-           "flag": is_flagged(groups), "latency_ms": r["latency_ms"], "error": r["error"], "judge": judge}
+           "flag": flag_of(r, groups), "latency_ms": r["latency_ms"], "error": r["error"], "judge": judge,
+           **({"request_id": r["request_id"]} if r["request_id"] else {})}
     return rec, r["status"], r["retry_after"]
 
 

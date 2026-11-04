@@ -147,4 +147,33 @@ assert.deepEqual(JSON.parse(dataTag), back);                     // round-trips,
 assert.equal(html.match(/<\/script>/g).length, 3);               // exactly our three tags close
 assert(!/<(script|link|img)[^>]+(src|href)=/i.test(html));        // nothing loaded from the network
 if (process.argv[2]) fs.writeFileSync(process.argv[2], html);    // optional: write sample for a browser check
+
+// Compare two runs: matched by id; each changed prompt lands in exactly one bucket
+const { compare } = require("./report.js");
+const F = { prompt_defense: "l1_confident" }, P = { prompt_defense: "no_level" };
+const lr = (id, groups, label, latency_ms = 100, error = null) => ({ ...rec(id, "hf:C", groups, latency_ms, error), label });
+const before = { records: [
+  lr("a", P, "malicious"), lr("b", F, "malicious"), lr("c", F, "benign"), lr("d", P, "benign"),
+  lr("e", P, null), lr("f", P, "malicious", 100, "HTTP 429"), lr("old", F, "malicious") ] };
+const after = { records: [
+  lr("a", F, "malicious", 50), lr("b", P, "malicious", 50), lr("c", P, "benign", 50), lr("d", F, "benign", 50),
+  lr("e", F, null, 50), lr("f", F, "malicious", 50), lr("new", P, "benign", 50) ] };
+const C = compare(before, after);
+assert.deepEqual(Object.fromEntries(Object.entries(C.changed).map(([k, v]) => [k, v.map(r => r.id)])),
+  { caught: ["a"], missed: ["b"], newFalse: ["d"], fixedFalse: ["c"], flagged: ["e"], unflagged: [] });
+assert.equal(C.common, 5);                                        // f failed earlier; old/new only in one run
+assert.equal(C.onlyBase, 1); assert.equal(C.onlyCur, 1);
+const row = key => C.rows.find(r => r.key === key);
+assert.deepEqual([row("effective").base, row("effective").cur], [2 / 4, 2 / 3]);   // f's failure counts as missed before
+assert.deepEqual([row("errors").base, row("errors").cur], [1, 0]);
+assert.deepEqual([row("avg").base, row("avg").cur], [100, 50]);
+assert.equal(row("fpr").better, "lower");
+// Screening mode: "detected" (policy said yes) counts as flagged; no_level doesn't.
+{
+  const { levelText } = require("./report.js");
+  const sm = metrics([rec("s1", "S", { prompt_defense: "detected", dlp: "no_level" }, 10), rec("s2", "S", { dlp: "no_level" }, 10)], 4);
+  assert.equal(sm.flagged, 1);
+  assert.deepEqual(sm.byGroup.map(g => [g.key, g.n]), [["prompt_defense", 1], ["dlp", 0]]);
+  assert.equal(levelText("detected"), "detected by your policy");
+}
 console.log("ok");
