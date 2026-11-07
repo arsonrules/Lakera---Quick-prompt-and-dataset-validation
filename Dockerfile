@@ -1,7 +1,8 @@
 FROM python:3.13-slim
 WORKDIR /app
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt && useradd --create-home app
+# data/ must be writable by the app user: large HF samples are cached there as Parquet.
+RUN pip install --no-cache-dir -r requirements.txt && useradd --create-home app && mkdir -p /app/data && chown app /app/data
 COPY app.py index.html report.js ./
 COPY scenarios ./scenarios
 USER app

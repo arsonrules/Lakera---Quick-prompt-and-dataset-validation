@@ -4,10 +4,14 @@ A local web UI for testing Lakera Guard (Check Point AI Guardrails) detection. I
 
 ## Quick start
 
+Needs **Python 3.11 or newer** (pyarrow 26 has no 3.10 build); tested on 3.11–3.15. Node.js is only needed to run `test_report.js`.
+
 ```bash
-uv venv .venv && uv pip install --python .venv/bin/python -r requirements.txt
+python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 .venv/bin/uvicorn app:app --port 8765          # open http://localhost:8765
 ```
+
+With [uv](https://docs.astral.sh/uv/) instead of pip: `uv venv .venv && uv pip install --python .venv/bin/python -r requirements.txt`. On Windows, use `.venv\Scripts\` in place of `.venv/bin/`.
 
 Or with Docker (published on localhost only, because the backend forwards your API keys):
 
@@ -15,6 +19,8 @@ Or with Docker (published on localhost only, because the backend forwards your A
 docker build -t lakera-guard-tester .
 docker run --rm -p 127.0.0.1:8765:8765 -v "$PWD/data:/app/data" lakera-guard-tester
 ```
+
+The `-v` mount keeps downloaded datasets between runs; without it the container still works but forgets its cache. On Linux, the container runs as a non-root user, so make `data/` writable by it (for example `mkdir -p data && chmod a+rwx data`).
 
 ## Using it
 
