@@ -22,6 +22,18 @@ docker run --rm -p 127.0.0.1:8765:8765 -v "$PWD/data:/app/data" lakera-guard-tes
 
 The `-v` mount keeps downloaded datasets between runs; without it the container still works but forgets its cache. On Linux, the container runs as a non-root user, so make `data/` writable by it (for example `mkdir -p data && chmod a+rwx data`).
 
+**`CERTIFICATE_VERIFY_FAILED` behind a corporate proxy:** your network re-signs HTTPS with its own root CA, which the app doesn't trust by default. Get that root CA as a PEM file from IT (here `corp-ca.pem`), build a bundle that adds it to the standard CAs, and point `SSL_CERT_FILE` at it:
+
+```bash
+docker run --rm -v "$PWD/corp-ca.pem:/tmp/corp.pem:ro" lakera-guard-tester sh -c 'cat "$(python -m certifi)" /tmp/corp.pem' > ca-bundle.pem
+```
+
+```bash
+docker run --rm -p 127.0.0.1:8765:8765 -v "$PWD/data:/app/data" -v "$PWD/ca-bundle.pem:/certs/ca-bundle.pem:ro" -e SSL_CERT_FILE=/certs/ca-bundle.pem lakera-guard-tester
+```
+
+The same works without Docker: `SSL_CERT_FILE=ca-bundle.pem .venv/bin/uvicorn app:app --port 8765`. All calls (Hugging Face, Lakera, the judge) use this bundle.
+
 ## Using it
 
 New to guardrail testing? The app walks you through it: **Quick check** tries one prompt; then **1 Choose prompts → 2 Run test → 3 Report**. A tick appears on each step once it's done.

@@ -68,7 +68,12 @@ def is_flagged(groups: dict[str, str], threshold: int = FLAG_AT) -> bool:
     return any(rank(lv) < threshold for lv in groups.values())
 
 
-client = httpx.AsyncClient(timeout=30)
+client = httpx.AsyncClient(timeout=30)  # trusts SSL_CERT_FILE / SSL_CERT_DIR if set (corporate proxy CAs)
+CERT_HINT = " (a proxy is re-signing HTTPS: point SSL_CERT_FILE at a CA bundle that includes its root, see README)"
+
+
+def with_hint(msg: str) -> str:
+    return msg + CERT_HINT if "CERTIFICATE_VERIFY_FAILED" in msg else msg
 
 
 @asynccontextmanager
@@ -130,7 +135,7 @@ async def call_lakera(conn: Conn, messages: list[dict], tools: list[dict] | None
         else:
             results = data.get("results", [])
     except (httpx.HTTPError, ValueError) as e:
-        status, retry_after, error, results = None, None, f"{type(e).__name__}: {e}", []
+        status, retry_after, error, results = None, None, with_hint(f"{type(e).__name__}: {e}"), []
     return {"latency_ms": round((time.perf_counter() - t0) * 1000, 1), "error": error, "results": results,
             "status": status, "retry_after": retry_after, "flagged": flagged, "request_id": request_id}
 
@@ -378,7 +383,7 @@ async def hf_test(x_hf_token: str | None = Header(None)):
     try:
         r = await client.get("https://huggingface.co/api/whoami-v2", headers={"Authorization": f"Bearer {x_hf_token}"}, timeout=15)
     except httpx.HTTPError as e:
-        return {"ok": False, "error": f"Couldn't reach Hugging Face ({type(e).__name__}). Check the internet connection."}
+        return {"ok": False, "error": with_hint(f"Couldn't reach Hugging Face ({type(e).__name__}: {e}). Check the internet connection.")}
     if r.status_code == 200:
         j = r.json()
         return {"ok": True, "name": j.get("name"), "role": ((j.get("auth") or {}).get("accessToken") or {}).get("role")}
@@ -602,10 +607,10 @@ async def build_cases(req: CasesReq):
     for s, res in zip(req.sources, await asyncio.gather(
             *(build_source(s, req.seed, req.hf_token) for s in req.sources), return_exceptions=True)):
         if isinstance(res, BaseException):
-            errors.append(f"{s.name}: {getattr(res, 'detail', res)}")
+            errors.append(with_hint(f"{s.name}: {getattr(res, 'detail', res)}"))
         else:
             cases += res[0]
-            errors += [res[1]] if res[1] else []
+            errors += [with_hint(res[1])] if res[1] else []
     return {"seed": req.seed, "cases": cases, "errors": errors}
 
 
