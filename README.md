@@ -53,7 +53,7 @@ docker run --rm -i -v "$PWD/ca-bundle.pem:/certs/ca-bundle.pem:ro" -e SSL_CERT_F
 1. **Top bar:** Lakera API key, region, optional project ID (blank = Lakera's default policy). **Test connection** checks the key.
 2. **Quick check:** test one prompt. **Add it as: Attack / Normal prompt** saves it into every later batch run.
 3. **1 Choose prompts:** the recommended starter set, presets, downloaded datasets, Hugging Face search, an uploaded file or pasted prompts. Pick N at random per source (or **All**, up to 500,000); the **random seed** makes picks repeatable. **Build test set** can be downloaded as .jsonl (re-uploadable) or .csv.
-4. **2 Run test:** optional judge model (any OpenAI-compatible API) and system prompt; 1–16 parallel checks. On a `429` the run halves concurrency, waits for `Retry-After` and retries once. **Stop**, **Resume** and **Retry failed checks** keep every result.
+4. **2 Run test:** optional classifier (any OpenAI-compatible API) and system prompt; 1–16 parallel checks. On a `429` the run halves concurrency, waits for `Retry-After` and retries once. **Stop**, **Resume** and **Retry failed checks** keep every result.
 5. **3 Report:** headline answer with **Show missed** / **Show false alarms**, dataset composition with a detection overlay, metrics, results by source, clickable confusion tables, and every prompt's detail. Download as HTML (interactive, offline) or JSON, reopen either with **Open saved report…**, and **Compare** two runs prompt by prompt (build both from the same sources and seed).
 
 ## Endpoints
@@ -79,19 +79,19 @@ docker run --rm -i -v "$PWD/ca-bundle.pem:/certs/ca-bundle.pem:ro" -e SSL_CERT_F
 | Metric | Needs | Definition |
 |---|---|---|
 | Detection rate | — | flagged ÷ prompts screened successfully |
-| False positive rate | label, scenario or judge | should-pass prompts flagged ÷ should-pass prompts (failed checks left out) |
-| Effective detection rate | label, scenario or judge | should-flag prompts flagged ÷ should-flag prompts; failed checks count as missed. "Should flag" comes from the dataset label, else the scenario, else the judge |
+| False positive rate | label, scenario or classifier | should-pass prompts flagged ÷ should-pass prompts (failed checks left out) |
+| Effective detection rate | label, scenario or classifier | should-flag prompts flagged ÷ should-flag prompts; failed checks count as missed. "Should flag" comes from the dataset label, else the scenario, else the classifier |
 | Bypass candidates | — | prompts not flagged |
 | Avg RTT / Max latency | — | backend-measured round trip to Lakera, errors and warm-up excluded |
-| Attack Success Rate | judge | judged malicious & not flagged ÷ judged malicious |
-| Attack Recall | judge | judged malicious & flagged ÷ judged malicious |
-| Precision | judge | flagged & expected ÷ flagged (expected = judged malicious or sensitive data) |
-| False Positive Rate (judge) | judge | flagged & not expected ÷ not expected |
-| Sensitive Data Leakage | judge | sensitive data & no DLP flag ÷ sensitive data |
+| Attack Success Rate | classifier | classified malicious & not flagged ÷ classified malicious |
+| Attack Recall | classifier | classified malicious & flagged ÷ classified malicious |
+| Precision | classifier | flagged & expected ÷ flagged (expected = classified malicious or sensitive data) |
+| False Positive Rate (classifier) | classifier | flagged & not expected ÷ not expected |
+| Sensitive Data Leakage | classifier | sensitive data & no DLP flag ÷ sensitive data |
 | Unauthorized Action Success Rate | agent scenarios | unauthorized & not flagged ÷ unauthorized scenarios |
 | Allowed actions blocked | agent scenarios | allowed & flagged ÷ allowed scenarios |
 
-The judge reviews every successfully screened prompt. Its time isn't counted in Lakera latency, and its verdicts are model labels, not ground truth.
+The classifier reviews every successfully screened prompt. Its time isn't counted in Lakera latency, and its verdicts are model labels, not ground truth.
 
 ## Local datasets
 
@@ -133,7 +133,7 @@ Lakera's default policy runs no agent detectors: use a project ID whose policy e
 
 - API keys and the HF token stay in the tab's session storage, are sent to the local backend per request, and are never logged, stored or exported.
 - The backend binds to localhost; in Docker publish to `127.0.0.1` only.
-- The judge URL you enter is called as-is.
+- The classifier URL you enter is called as-is.
 
 ## Development
 

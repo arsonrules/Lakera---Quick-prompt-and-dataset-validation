@@ -12,7 +12,7 @@
   const best = r => Object.values(r.groups || {}).reduce((m, lv) => (rank(lv) < rank(m) ? lv : m), "no_level");
 
   // "Should Lakera flag this?" from the best source available: the dataset's label, else the agent scenario's
-  // expectation, else the judge (malicious or sensitive data). null = unknown.
+  // expectation, else the classifier (malicious or sensitive data). null = unknown.
   function truthOf(r) {
     if (r.label === "malicious" || r.label === "benign") return { should: r.label === "malicious", from: "label" };
     if (r.expected) return { should: r.expected === "unauthorized", from: "scenario" };
@@ -41,7 +41,7 @@
   }
 
   // Dataset composition: only what the datasets themselves say (label column, whole-dataset label, scenario).
-  // The judge is deliberately not counted here: it's a model's opinion, not the dataset's.
+  // The classifier is deliberately not counted here: it's a model's opinion, not the dataset's.
   // unclear = a label column whose value isn't malicious/benign
   const compCat = r => r.expected || (r.label === "malicious" || r.label === "benign" ? r.label : r.label_raw ? "unclear" : "unlabeled");
   function composition(records) {
@@ -73,7 +73,7 @@
     const groups = [...Object.keys(GROUPS).filter(g => present.has(g)), ...[...present].filter(g => !(g in GROUPS))];
     const flagged = ok.filter(isFlag);
     const lats = ok.map(r => r.latency_ms);
-    // Judge metrics. "Expected flag" = judge says malicious or contains sensitive data (DLP detections are correct too).
+    // Judge metrics. "Expected flag" = classifier says malicious or contains sensitive data (DLP detections are correct too).
     const J = ok.filter(r => r.judge && !r.judge.error);
     let judge = null;
     if (J.length) {
@@ -91,18 +91,18 @@
     }
     const maxRec = ok.reduce((m, r) => (!m || r.latency_ms > m.latency_ms ? r : m), null);
     // Agent scenarios: ground truth in r.expected. A flag from any detector counts as blocked (as Enforce mode would).
-    // Dataset labels (from the dataset, not this tool): compared with Lakera's flag and the judge.
+    // Dataset labels (from the dataset, not this tool): compared with Lakera's flag and the classifier.
     const Lb = ok.filter(r => r.label === "malicious" || r.label === "benign");
     let labels = null;
     if (Lb.length) {
       const mal = Lb.filter(r => r.label === "malicious"), ben = Lb.filter(r => r.label === "benign");
       const missed = mal.filter(r => !isFlag(r)), falseFlags = ben.filter(isFlag);
-      const judged = Lb.filter(r => r.judge && !r.judge.error);
+      const classified = Lb.filter(r => r.judge && !r.judge.error);
       labels = {
         n: Lb.length, unknown: ok.filter(r => r.label_raw && !r.label).length, malicious: mal.length, benign: ben.length,
         missed, falseFlags, recall: rate(mal.length - missed.length, mal.length), fpr: rate(falseFlags.length, ben.length),
         confusion: { tp: mal.length - missed.length, fn: missed.length, fp: falseFlags.length, tn: ben.length - falseFlags.length },
-        judged: judged.length, judgeAgree: judged.filter(r => r.judge.malicious === (r.label === "malicious")).length,
+        judged: classified.length, judgeAgree: classified.filter(r => r.judge.malicious === (r.label === "malicious")).length,
       };
     }
     const S = ok.filter(r => r.expected);
@@ -538,7 +538,7 @@
     else if (b !== "no_level") res.append(h("div", "muted", `closest: ${g} (${levelText(b)})`));
     if (r.label) res.append(h("div", "muted", `dataset says ${r.label}`));
     if (r.expected) res.append(h("div", "muted", `scenario: ${r.expected}`));
-    if (r.judge) res.append(h("div", "muted", r.judge.error ? "judge failed" : `judge: ${judgeWord(r.judge)}`));
+    if (r.judge) res.append(h("div", "muted", r.judge.error ? "classifier failed" : `classifier: ${judgeWord(r.judge)}`));
     return res;
   }
 
@@ -551,10 +551,10 @@
     fact("Lakera request ID", r.request_id ? h("code", null, r.request_id) : null); // find this request in the portal logs
     fact("Dataset label", r.label ? r.label + (r.label_raw ? ` (${r.label_raw})` : "") : r.label_raw ? `not malicious/benign (${r.label_raw})` : null);
     fact("Scenario expects", r.expected ? r.expected + (r.danger ? " · " + r.danger.replace(/_/g, " ") : "") : null);
-    if (r.judge) fact("Judge", r.judge.error ? "failed: " + r.judge.error : `${judgeWord(r.judge)}${r.judge.reason ? " — " + r.judge.reason : ""}`);
+    if (r.judge) fact("Classifier", r.judge.error ? "failed: " + r.judge.error : `${judgeWord(r.judge)}${r.judge.reason ? " — " + r.judge.reason : ""}`);
     const t = truthOf(r);
     fact("Should be flagged", t ? `${t.should ? "yes" : "no"}, according to the ${{ label: "dataset label", scenario: "scenario", judge: "judge" }[t.from]}`
-                                : "unknown: no label, scenario or judge");
+                                : "unknown: no label, scenario or classifier");
     const parts = [facts];
     const convo = r.messages && (r.expected || r.messages.length > 1) ? r.messages : null;
     parts.push(h("div", "blk", convo ? "Conversation sent to Lakera" : "Prompt"));
@@ -637,7 +637,7 @@
     const pureNone = !C.unclear && !C.unauthorized && !C.allowed;
     const filterOf = { malicious: "malicious", benign: "benign", unlabeled: pureNone ? "none" : null };
     const relies = judgeOn
-      ? "the judge model's verdicts, plus what Lakera's guardrails flagged"
+      ? "the classifier's verdicts, plus what Lakera's guardrails flagged"
       : "what Lakera's guardrails flagged on their own: the report can't tell right flags from wrong ones";
     const draw = () => {
       const parts = [], segs = SEGS.filter(([key]) => C[key]);
@@ -649,7 +649,7 @@
       if (!C.anyLabels) parts.push(h("div", "warnbox", icon("alert"), h("div", null,
         h("b", null, "There's no indicator for dataset composition. "),
         `None of the selected datasets says which prompts are malicious or benign, so all the test results rely heavily on ${relies}.`,
-        judgeOn ? null : " Add a judge model on the Run tab, or pick datasets with labels (for example the Labeled mix presets).")));
+        judgeOn ? null : " Add a classifier on the Run tab, or pick datasets with labels (for example the Labeled mix presets).")));
       if (C.anyLabels || compDetect) {
         const bar = h("div", "compbar" + (compDetect ? " det" : ""));
         for (const [key, name, cls, should] of segs) {
@@ -726,8 +726,8 @@
       ["missed", "Now missed", "should be flagged; the earlier run caught them", "worse"],
       ["fixedFalse", "False alarms fixed", "should be let through; the earlier run flagged them", "better"],
       ["newFalse", "New false alarms", "should be let through; the earlier run didn't flag them", "worse"],
-      ["flagged", "Newly flagged (no label)", "no label or judge verdict says whether they should be", "neutral"],
-      ["unflagged", "No longer flagged (no label)", "no label or judge verdict says whether they should be", "neutral"],
+      ["flagged", "Newly flagged (no label)", "no label or classifier verdict says whether they should be", "neutral"],
+      ["unflagged", "No longer flagged (no label)", "no label or classifier verdict says whether they should be", "neutral"],
     ].filter(([key]) => C.changed[key].length);
     const total = groups.reduce((a, [key]) => a + C.changed[key].length, 0);
     const lists = groups.map(([key, title, help, dir]) => h("details", "chg",
@@ -758,16 +758,16 @@
     if (S.cleanChecked) lines.push(p("It wrongly flagged ", b(`${S.falseFlags.toLocaleString()} of the ${plural(S.cleanChecked, "prompt", "prompts")}`), " it should have let through (", b(pct(S.falseFlagRate)), ").", ...(show(S.falseFlags, "false", "false alarms") || [])));
     if (!S.expected && !S.cleanChecked)
       lines.push(p("Lakera flagged ", b(`${m.flagged.toLocaleString()} of ${plural(m.ok, "prompt", "prompts")}`), ` (${pct(m.detectionRate)}).`),
-                 note("None of these prompts has a label, scenario or judge verdict, so the report can't tell right flags from wrong ones. Use labeled datasets or add a judge model to find out."));
+                 note("None of these prompts has a label, scenario or classifier verdict, so the report can't tell right flags from wrong ones. Use labeled datasets or add a classifier to find out."));
     else if (!S.cleanChecked) lines.push(note("No prompts that should be let through were tested, so false alarms weren't measured. Add benign prompts (for example a Benign preset) to measure them."));
     else if (!S.expected) lines.push(note("No prompts that should be flagged were tested, so the catch rate wasn't measured. Add attack prompts to measure it."));
     if (S.expErrors) lines.push(note(`${plural(S.expErrors, "failed check is", "failed checks are")} counted as missed, because a failed check protects nothing.`));
-    if (S.unknown && (S.expected || S.cleanChecked)) lines.push(note(`${plural(S.unknown, "prompt has", "prompts have")} no label, scenario or judge verdict, so ${S.unknown === 1 ? "it isn't" : "they aren't"} in these numbers.`));
+    if (S.unknown && (S.expected || S.cleanChecked)) lines.push(note(`${plural(S.unknown, "prompt has", "prompts have")} no label, scenario or classifier verdict, so ${S.unknown === 1 ? "it isn't" : "they aren't"} in these numbers.`));
     const J = m.judge, LB = m.labels, C = m.composition;
     if (!C.anyLabels && (S.expected || S.cleanChecked))
-      lines.push(note("The datasets don't say which prompts are malicious or benign, so these numbers rest on the judge's verdicts. See Dataset composition."));
+      lines.push(note("The datasets don't say which prompts are malicious or benign, so these numbers rest on the classifier's verdicts. See Dataset composition."));
     if (J && LB && LB.judged && LB.judgeAgree < LB.judged)
-      lines.push(note(`The judge disagrees with the datasets' labels on ${plural(LB.judged - LB.judgeAgree, "prompt", "prompts")}. These numbers follow the labels; "The judge's view" below follows the judge.`));
+      lines.push(note(`The classifier disagrees with the datasets' labels on ${plural(LB.judged - LB.judgeAgree, "prompt", "prompts")}. These numbers follow the labels; "The classifier's view" below follows the classifier.`));
     if (A) lines.push(p("Agent tool calls: ", b(`${A.through.length} of ${A.unauthorized}`), " unauthorized calls got through", A.agentSeen ? "." : ". This policy has no Agent Behavior detector, so only other detectors could catch them."));
     if (m.errors.length) lines.push(p(b(plural(m.errors.length, "check", "checks") + " failed"), ` (for example a rate limit or network error) and ${m.errors.length === 1 ? "has" : "have"} no result.`));
     if (L.n) lines.push(p("Lakera answered in ", b(ms(L.avg)), ` on average; the slowest answer took ${ms(L.max)}.`));
@@ -804,7 +804,7 @@
       ["Parallel checks", meta.concurrency ? `${meta.concurrency}` + (run.done && run.done.throttled ? `; Lakera rate-limited the run ${times(run.done.throttled)}, so it slowed to ${run.done.final_concurrency}` : "") : null],
       ["Duration", run.done && run.done.elapsed_s != null ? `${run.done.elapsed_s} s` : null],
       ["Warm-up call", run.warmup ? `${ms(run.warmup.latency_ms)}, not counted in response times` : null],
-      ["Judge model", meta.judge_model || "none"],
+      ["Classifier", meta.judge_model || "none"],
     ].filter(([, v]) => v);
     const gloss = sec("glossary", "How to read this report", { open: false },
       h("dl", "gloss",
@@ -815,9 +815,9 @@
           : term("Confidence level", "How sure a detector is: L1 confident, L2 very likely, L3 likely, L4 less likely, L5 unlikely. L1–L4 count as flagged.")),
         ...term("Detectors", "Lakera checks each prompt with several detectors, grouped as:", groupList),
         ...term("Malicious / benign", "Malicious: an attack or harmful request that Lakera should flag. Benign: a normal prompt it should let through."),
-        ...term("Threat (should be flagged)", "A prompt Lakera should flag. Whether a prompt is one comes from, in order: the dataset's own label, the agent scenario, or the judge (which also counts prompts containing personal data). Prompts with none of these are left out of accuracy numbers."),
+        ...term("Threat (should be flagged)", "A prompt Lakera should flag. Whether a prompt is one comes from, in order: the dataset's own label, the agent scenario, or the classifier (which also counts prompts containing personal data). Prompts with none of these are left out of accuracy numbers."),
         ...term("False alarm", "A prompt that should have been let through but was flagged (a false positive)."),
-        ...term("Judge", "An AI model you chose that labels each prompt. Its verdicts are a second opinion, not ground truth."),
+        ...term("Classifier", "An AI model you chose that labels each prompt. Its verdicts are a second opinion, not ground truth."),
         ...term("Failed check", "A request to Lakera that returned an error, for example a rate limit, so there is no result. Accuracy numbers count it as missed."),
         ...term("Response time", "Time from sending a prompt until Lakera's answer arrives, measured on this computer (round-trip time, RTT). It includes network time; Lakera's own processing time is shown on the Lakera portal."),
         ...term("This run", h("dl", "facts", ...runFacts.flatMap(([a, v]) => [h("dt", null, a), h("dd", null, v)])))));
@@ -828,9 +828,9 @@
 
     // ---- metric tiles, grouped by the question they answer ----
     const fromText = f => [f.label && `${f.label.toLocaleString()} from dataset labels`, f.scenario && `${f.scenario.toLocaleString()} from agent scenarios`,
-                           f.judge && `${f.judge.toLocaleString()} from the judge`].filter(Boolean).join(", ");
-    const truthHow = `"Should be flagged" comes from, in order: the dataset label, the agent scenario, or the judge (malicious or containing personal data).`;
-    const needTruth = "Needs labeled prompts or a judge";
+                           f.judge && `${f.judge.toLocaleString()} from the classifier`].filter(Boolean).join(", ");
+    const truthHow = `"Should be flagged" comes from, in order: the dataset label, the agent scenario, or the classifier (malicious or containing personal data).`;
+    const needTruth = "Needs labeled prompts or a classifier";
     const overview = tileGroup("Volume", null,
       tile({ label: "Prompts checked", value: m.ok.toLocaleString(), meaning: "answered by Lakera",
              detail: `${m.total.toLocaleString()} sent · ${m.errors.length.toLocaleString()} failed`, explain: [
@@ -843,10 +843,10 @@
       tile({ label: "Not flagged", value: m.bypass.length.toLocaleString(), meaning: "let through (bypass candidates)",
              detail: "benign prompts belong here", explain: [
         `Checked prompts where no detector ${hitTxt}: ${m.ok.toLocaleString()} checked − ${m.flagged.toLocaleString()} flagged = ${m.bypass.length.toLocaleString()}.`,
-        `Most may be harmless. The threats among them are counted as Missed when a label or the judge says they should have been flagged.`] }));
+        `Most may be harmless. The threats among them are counted as Missed when a label or the classifier says they should have been flagged.`] }));
 
     const f = S.truthFrom, srcs = [f.label && `the dataset labels (${plural(f.label, "prompt", "prompts")})`,
-      f.scenario && `the agent scenarios (${f.scenario.toLocaleString()})`, f.judge && `the judge (${f.judge.toLocaleString()})`].filter(Boolean);
+      f.scenario && `the agent scenarios (${f.scenario.toLocaleString()})`, f.judge && `the classifier (${f.judge.toLocaleString()})`].filter(Boolean);
     const truthNote = S.expected || S.cleanChecked
       ? `Whether each prompt should be flagged comes from ${srcs.length > 1 ? srcs.slice(0, -1).join(", ") + " and " + srcs[srcs.length - 1] : srcs[0]}.` +
         (S.unknown ? ` ${plural(S.unknown, "prompt has", "prompts have")} none of these and ${S.unknown === 1 ? "is" : "are"} left out.` : "")
@@ -872,34 +872,34 @@
             `Flagged ÷ prompts that should be let through = ${S.falseFlags.toLocaleString()} ÷ ${S.cleanChecked.toLocaleString()} = ${pct(S.falseFlagRate)}.`, truthHow,
             `Failed checks are left out here, since a failed check flags nothing.`] })
         : tile({ label: "False positive rate", value: needTruth, off: true, explain: [
-            "Flagged ÷ prompts that should be let through. It needs prompts known to be benign: a Benign preset, a labeled dataset, or a judge."] }),
+            "Flagged ÷ prompts that should be let through. It needs prompts known to be benign: a Benign preset, a labeled dataset, or a classifier."] }),
       A && tile({ label: "Allowed actions blocked", value: pct(A.falseBlock), meaning: "legitimate tool calls flagged", better: "lower",
                   detail: `${A.blocked.length} of ${A.allowed} flagged`, explain: [
         `Legitimate tool calls flagged ÷ legitimate tool calls = ${A.blocked.length} ÷ ${A.allowed} = ${pct(A.falseBlock)}.`] })];
     // Caught and false alarms side by side: the two numbers that say whether the right prompts were flagged.
     const accuracy = tileGroup("Accuracy: did Lakera flag the right prompts?", truthNote, catching[0], falseAlarms[0], catching[1], falseAlarms[1]);
 
-    // The judge's own view: every metric here uses only its verdicts, so it can differ from the dataset labels above.
-    const judgeNote = J ? `These use only the judge's verdicts: it called ${plural(J.attacks, "prompt", "prompts")} malicious and ${J.sensitive.toLocaleString()} as containing personal data, out of ${J.n.toLocaleString()} judged.` +
+    // The classifier's own view: every metric here uses only its verdicts, so it can differ from the dataset labels above.
+    const judgeNote = J ? `These use only the classifier's verdicts: it called ${plural(J.attacks, "prompt", "prompts")} malicious and ${J.sensitive.toLocaleString()} as containing personal data, out of ${J.n.toLocaleString()} classified.` +
       (LB && LB.judged ? ` It agrees with the datasets' labels on ${LB.judgeAgree.toLocaleString()} of ${LB.judged.toLocaleString()} labeled prompts, so these numbers can differ from the ones above.` : "") : null;
-    const judgeView = J ? tileGroup("The judge's view", judgeNote,
+    const judgeView = J ? tileGroup("The classifier's view", judgeNote,
       tile({ label: "Attack Success Rate", value: pct(J.asr), meaning: "attacks that got through", better: "lower",
              detail: `${J.missed.length.toLocaleString()} of ${J.attacks.toLocaleString()} not flagged`, explain: [
-        `Malicious per the judge and not flagged ÷ malicious per the judge = ${J.missed.length} ÷ ${J.attacks} = ${pct(J.asr)}.`,
-        `"Success" means the attack got past the guardrail. No model is called, so this doesn't show whether the attack would have worked on your app. Failed checks and judge errors are left out.`] }),
+        `Malicious per the classifier and not flagged ÷ malicious per the classifier = ${J.missed.length} ÷ ${J.attacks} = ${pct(J.asr)}.`,
+        `"Success" means the attack got past the guardrail. No model is called, so this doesn't show whether the attack would have worked on your app. Failed checks and classifier errors are left out.`] }),
       tile({ label: "Attack Recall", value: pct(J.recall), meaning: "attacks caught", better: "higher",
              detail: `${(J.attacks - J.missed.length).toLocaleString()} of ${J.attacks.toLocaleString()} flagged`, explain: [
-        `Malicious per the judge and flagged ÷ malicious per the judge = ${J.attacks - J.missed.length} ÷ ${J.attacks} = ${pct(J.recall)}. It equals 100% minus the Attack Success Rate.`] }),
+        `Malicious per the classifier and flagged ÷ malicious per the classifier = ${J.attacks - J.missed.length} ÷ ${J.attacks} = ${pct(J.recall)}. It equals 100% minus the Attack Success Rate.`] }),
       tile({ label: "Precision", value: pct(J.precision), meaning: "flags that were right", better: "higher",
              detail: `${J.confusion.tp} of ${J.confusion.tp + J.confusion.fp} flags`, explain: [
-        `Flags the judge agrees with ÷ all flags on judged prompts = ${J.confusion.tp} ÷ ${J.confusion.tp + J.confusion.fp} = ${pct(J.precision)}.`,
-        `A flag counts as right when the judge says the prompt is malicious or contains personal data, since flagging personal data is the DLP detectors' job.`] }),
-      tile({ label: "False Positive Rate (judge)", value: pct(J.fpr), meaning: "benign prompts flagged", better: "lower",
+        `Flags the classifier agrees with ÷ all flags on classified prompts = ${J.confusion.tp} ÷ ${J.confusion.tp + J.confusion.fp} = ${pct(J.precision)}.`,
+        `A flag counts as right when the classifier says the prompt is malicious or contains personal data, since flagging personal data is the DLP detectors' job.`] }),
+      tile({ label: "False Positive Rate (classifier)", value: pct(J.fpr), meaning: "benign prompts flagged", better: "lower",
              detail: `${J.confusion.fp} of ${J.confusion.fp + J.confusion.tn} flagged`, explain: [
-        `Flagged ÷ prompts the judge calls benign = ${J.confusion.fp} ÷ ${J.confusion.fp + J.confusion.tn} = ${pct(J.fpr)}. Benign here means neither malicious nor containing personal data.`] }),
+        `Flagged ÷ prompts the classifier calls benign = ${J.confusion.fp} ÷ ${J.confusion.fp + J.confusion.tn} = ${pct(J.fpr)}. Benign here means neither malicious nor containing personal data.`] }),
       tile({ label: "Sensitive Data Leakage", value: pct(J.leakage), meaning: "personal data the DLP missed", better: "lower", mark: gearMark(),
              detail: `${J.leaked.length.toLocaleString()} of ${J.sensitive.toLocaleString()} missed`, explain: [
-        `Prompts the judge says contain personal data, where no Data Leakage (DLP) detector ${hitTxt} ÷ prompts with personal data = ${J.leaked.length} ÷ ${J.sensitive} = ${pct(J.leakage)}.`,
+        `Prompts the classifier says contain personal data, where no Data Leakage (DLP) detector ${hitTxt} ÷ prompts with personal data = ${J.leaked.length} ÷ ${J.sensitive} = ${pct(J.leakage)}.`,
         `The gear marks a customization item: Lakera's built-in DLP covers 8 mostly-US types (names, US addresses and phones, emails, IPs, cards, IBANs, US SSNs). Other formats need custom regex or guardrails in your Lakera project policy.`] })) : null;
 
     const speed = L.n ? tileGroup("Latency", null,
@@ -911,9 +911,9 @@
         `The single slowest answered prompt: ${ms(L.max)}${L.maxRec ? ` (${srcId(L.maxRec.id)})` : ""}. Measured the same way as the average.`] })) : null;
 
     const hints = [];
-    if (!J) hints.push(h("p", null, h("b", null, "Want more detail? "), "Add a judge model on the Run tab to also get Attack Success Rate, Attack Recall, Precision, False Positive Rate (judge) and Sensitive Data Leakage, measured on every prompt, even unlabeled ones."));
-    if (J) hints.push(h("p", null, h("b", null, `Judge${meta.judge_model ? ` (${meta.judge_model})` : ""}: `), `${plural(J.n, "prompt", "prompts")} judged`,
-      J.errors ? `, ${J.errors} judge errors left out` : "", J.unjudged ? `, ${J.unjudged} not judged` : "", ". Its verdicts are a second opinion, not ground truth."));
+    if (!J) hints.push(h("p", null, h("b", null, "Want more detail? "), "Add a classifier on the Run tab to also get Attack Success Rate, Attack Recall, Precision, False Positive Rate (classifier) and Sensitive Data Leakage, measured on every prompt, even unlabeled ones."));
+    if (J) hints.push(h("p", null, h("b", null, `Classifier${meta.judge_model ? ` (${meta.judge_model})` : ""}: `), `${plural(J.n, "prompt", "prompts")} classified`,
+      J.errors ? `, ${J.errors} classifier errors left out` : "", J.unjudged ? `, ${J.unjudged} not classified` : "", ". Its verdicts are a second opinion, not ground truth."));
     if (!A) hints.push(h("p", null, h("b", null, "Testing AI agents? "), "Add the agent scenarios (Choose prompts → Agent tool calls) and use a Lakera project whose policy enables Dangerous Deviation or a tool allow/deny list."));
     const note = h("div", "card note", ...hints);
 
@@ -923,7 +923,7 @@
     for (const [v, t] of [["all", "All"], ["flag", "Flagged"], ["pass", "Not flagged"], ["err", "Failed"], ["missed", "Missed threats"], ["false", "False alarms"]]) opt(fState, v, t);
     opt(fSrc, "", "All sources"); for (const s of m.summary.bySource) opt(fSrc, s.key, s.label);
     for (const [v, t] of [["", "All"], ["malicious", "Malicious"], ["benign", "Benign"], ["none", "No label"]]) opt(fLabel, v, t);
-    for (const [v, t] of [["", "All"], ["flag", "Should be flagged"], ["pass", "Should be let through"], ["none", "Not judged"]]) opt(fJudge, v, t);
+    for (const [v, t] of [["", "All"], ["flag", "Should be flagged"], ["pass", "Should be let through"], ["none", "Not classified"]]) opt(fJudge, v, t);
     const judgeIs = r => (!r.judge || r.judge.error ? "none" : r.judge.malicious || r.judge.sensitive_data ? "flag" : "pass");
     opt(fGroup, "", "Any"); for (const g of m.groups) opt(fGroup, g, "Flagged by " + (GROUPS[g] || g));
     fText.placeholder = "Search prompt text"; fText.type = "search"; fText.setAttribute("aria-label", "Search prompt text");
@@ -945,9 +945,9 @@
     fText.addEventListener("input", refilter);
     const allSec = section("all", `All prompts · ${m.total.toLocaleString()}`, { open: false, explain: [
       `Every prompt in the test. Use the filters, or click a row in "Results by source" or a bar in the charts to land here filtered.`,
-      `Click a prompt to see its full text (or agent conversation), what each detector reported, the dataset label, the judge's verdict and the raw JSON. Up to 500 are listed at a time.`] },
+      `Click a prompt to see its full text (or agent conversation), what each detector reported, the dataset label, the classifier's verdict and the raw JSON. Up to 500 are listed at a time.`] },
       h("div", "filters", h("label", null, "Result", fState), h("label", null, "Source", fSrc), h("label", null, "Detector", fGroup),
-        h("label", null, "Dataset label", fLabel), J ? h("label", null, "Judge", fJudge) : null, h("label", null, "Search", fText)), out);
+        h("label", null, "Dataset label", fLabel), J ? h("label", null, "Classifier", fJudge) : null, h("label", null, "Search", fText)), out);
     refilter();
     const showPrompts = ({ source = "", group = "", state = "all", label = "", judge = "" } = {}) => {
       fSrc.value = source; fGroup.value = group; fState.value = state; fLabel.value = label; fJudge.value = judge; fText.value = "";
@@ -956,9 +956,9 @@
 
     const C = m.composition;
     const compSec = sec("composition", "Dataset composition", {
-      sub: C.anyLabels ? `What the ${plural(C.total, "test prompt", "test prompts")} are, according to the datasets themselves (not the judge).` : null,
-      explain: [`Counts come only from the datasets: a label column, a whole dataset marked malicious or benign, or an agent scenario's expected outcome. The judge's verdicts are not counted here, because they're a model's opinion.`,
-                `Prompts whose label value isn't malicious or benign, and prompts from sources without labels, count as "No label". Their results rest on the judge (if one is set) or only on what Lakera flagged.`,
+      sub: C.anyLabels ? `What the ${plural(C.total, "test prompt", "test prompts")} are, according to the datasets themselves (not the classifier).` : null,
+      explain: [`Counts come only from the datasets: a label column, a whole dataset marked malicious or benign, or an agent scenario's expected outcome. The classifier's verdicts are not counted here, because they're a model's opinion.`,
+                `Prompts whose label value isn't malicious or benign, and prompts from sources without labels, count as "No label". Their results rest on the classifier (if one is set) or only on what Lakera flagged.`,
                 `Check detection results overlays Lakera's result on each part: solid = flagged, faded = not flagged, grey = the check failed. For labeled parts, flagged malicious prompts are caught and flagged benign ones are false positives.`] },
       compositionView(C, !!J, run.records, m.isFlag, showPrompts));
     const cmpSec = baseline ? compareView(compare(baseline, run, k), baseline, baselineName, meta) : null;
@@ -967,17 +967,17 @@
     parts.push(sec("summary", "Results by source", {
       sub: "The total first, then each dataset or file. Click a row to list its prompts.",
       explain: [`Flagged = flagged ÷ checked (the detection rate). Threats caught = caught ÷ should be flagged (the effective detection rate), with failed checks counted as missed. False alarms = flagged ÷ prompts that should be let through (the false positive rate).`,
-                `"–" means that source has no prompts with a known right answer (no label, scenario or judge verdict).`] },
+                `"–" means that source has no prompts with a known right answer (no label, scenario or classifier verdict).`] },
       summaryTable(m.summary, key => showPrompts({ source: key }))));
     if (LB) parts.push(h("div", "two",
       sec("labels", "Lakera vs the datasets' labels", {
         sub: "The datasets' own labels (a label column, or a whole dataset marked malicious or benign) against what Lakera did.",
         explain: [`Rows are the dataset's label; columns are Lakera's result. Failed checks are left out. Click a number to list those prompts.`,
                   `Caught ${LB.confusion.tp} of ${LB.malicious} labeled malicious (${pct(LB.recall)}); falsely flagged ${LB.confusion.fp} of ${LB.benign} labeled benign (${pct(LB.fpr)}).` +
-                  (LB.judged ? ` The judge agrees with the label on ${LB.judgeAgree} of the ${LB.judged} prompts it judged.` : "")] },
+                  (LB.judged ? ` The classifier agrees with the label on ${LB.judgeAgree} of the ${LB.judged} prompts it classified.` : "")] },
         confusion(LB.confusion, ["Labeled malicious", "Labeled benign"], key => { const f = cellFilter(key); showPrompts({ state: f.state, label: f.truth ? "malicious" : "benign" }); }),
         LB.unknown || LB.judged ? h("p", "sub", cap([LB.unknown ? `${plural(LB.unknown, "prompt has", "prompts have")} a label value that isn't malicious or benign` : null,
-          LB.judged ? `the judge agrees with the label on ${LB.judgeAgree} of ${LB.judged}` : null].filter(Boolean).join("; ")) + ".") : null),
+          LB.judged ? `the classifier agrees with the label on ${LB.judgeAgree} of ${LB.judged}` : null].filter(Boolean).join("; ")) + ".") : null),
       sec("disagree", `Where Lakera disagreed with the labels · ${(LB.missed.length + LB.falseFlags.length).toLocaleString()}`, {
         open: false, sub: "Labeled malicious but not flagged, then labeled benign but flagged. Worth reviewing: sometimes the label is the one that's wrong.",
         explain: [`${LB.missed.length} labeled malicious but not flagged, then ${LB.falseFlags.length} labeled benign but flagged. Failed checks are left out.`] },
@@ -993,15 +993,15 @@
         explain: [`Scenarios that expect "unauthorized" where no detector ${hitTxt}. Click one to see the conversation and the tool call.`] },
         A.through.length ? caseTable(A.through, m, 50) : h("p", "muted", "None: every unauthorized call was flagged."))));
     if (J) parts.push(h("div", "two",
-      sec("judgeCm", "Lakera vs the judge", {
-        sub: "The judge's verdict against what Lakera did.",
-        explain: [`Rows are the judge's verdict ("should be flagged" = malicious or containing personal data); columns are Lakera's result. Click a number to list those prompts.`,
-                  `${plural(J.n, "prompt", "prompts")} judged; judge errors and failed checks are left out.`] },
-        confusion(J.confusion, ["Should be flagged (judge)", "Should be let through (judge)"], key => { const f = cellFilter(key); showPrompts({ state: f.state, judge: f.truth ? "flag" : "pass" }); })),
-      sec("judgeMissed", `Malicious prompts Lakera missed (judge) · ${J.missed.length}`, {
-        open: false, sub: "The judge calls these malicious, but no detector flagged them. They make up the Attack Success Rate.",
-        explain: [`Prompts the judge calls malicious where no detector ${hitTxt}: ${J.missed.length} of ${J.attacks}.`] },
-        J.missed.length ? caseTable(J.missed, m, 50) : h("p", "muted", "None: Lakera flagged every prompt the judge called malicious."))));
+      sec("judgeCm", "Lakera vs the classifier", {
+        sub: "The classifier's verdict against what Lakera did.",
+        explain: [`Rows are the classifier's verdict ("should be flagged" = malicious or containing personal data); columns are Lakera's result. Click a number to list those prompts.`,
+                  `${plural(J.n, "prompt", "prompts")} classified; classifier errors and failed checks are left out.`] },
+        confusion(J.confusion, ["Should be flagged (classifier)", "Should be let through (classifier)"], key => { const f = cellFilter(key); showPrompts({ state: f.state, judge: f.truth ? "flag" : "pass" }); })),
+      sec("judgeMissed", `Malicious prompts Lakera missed (classifier) · ${J.missed.length}`, {
+        open: false, sub: "The classifier calls these malicious, but no detector flagged them. They make up the Attack Success Rate.",
+        explain: [`Prompts the classifier calls malicious where no detector ${hitTxt}: ${J.missed.length} of ${J.attacks}.`] },
+        J.missed.length ? caseTable(J.missed, m, 50) : h("p", "muted", "None: Lakera flagged every prompt the classifier called malicious."))));
     if (m.ok) {
       parts.push(h("div", "two",
         sec("byGroup", "What was flagged, by detector", {
@@ -1021,7 +1021,7 @@
     parts.push(sec("bypass", `Not flagged (bypass candidates) · ${m.bypass.length.toLocaleString()}`, {
       open: false,
       sub: "Prompts Lakera let through, the ones closest to being flagged first. " +
-        (J ? `The judge called ${J.missed.length} of them malicious.` : "Many may be harmless; labels or a judge tell the attacks apart."),
+        (J ? `The classifier called ${J.missed.length} of them malicious.` : "Many may be harmless; labels or a classifier tell the attacks apart."),
       explain: [`Checked prompts where no detector ${hitTxt}` + (screen ? ". Up to 200 are listed." : ", sorted so prompts that reached L5 (unlikely) come first. Up to 200 are listed.")] },
       m.bypass.length ? caseTable(m.bypass, m, 200) : h("p", "muted", "None: every checked prompt was flagged.")));
     parts.push(allSec); sections.push(allSec);
@@ -1031,7 +1031,7 @@
   // ---------- export ----------
   const pick = (o, keys) => (o ? Object.fromEntries(keys.filter(k => o[k] !== undefined).map(k => [k, o[k]])) : null);
 
-  /** Run -> JSON string with only report fields (no keys, judge URL or HF token); any secret string is redacted. */
+  /** Run -> JSON string with only report fields (no keys, classifier URL or HF token); any secret string is redacted. */
   function exportData(run, secrets = []) {
     let json = JSON.stringify({
       meta: pick(run.meta, ["endpoint", "url", "project_id", "mode", "threshold", "system", "judge_model", "started_at", "total", "concurrency"]),

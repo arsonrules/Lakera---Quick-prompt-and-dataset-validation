@@ -331,7 +331,7 @@
    <button id="reportRetry" type="button" hidden>Retry failed checks</button>
  </div>
  <input type="file" id="reportFile" accept=".json,.html,application/json,text/html" hidden>
- <p class="wrap muted" id="exportNote" hidden>The HTML file works offline and stays clickable. Keys, the judge URL and the HF token are left out.</p>
+ <p class="wrap muted" id="exportNote" hidden>The HTML file works offline and stays clickable. Keys, the classifier URL and the HF token are left out.</p>
  <div class="wrap" id="reportRoot"></div>
 </section>
 
@@ -339,13 +339,13 @@
  <div class="wrap">
   <h2>Run the test</h2>
   <div id="runReady" class="panel"></div>
-  <details class="opt" id="judgeBox"><summary id="judgeSum">Judge model (optional): off</summary>
+  <details class="opt" id="judgeBox"><summary id="judgeSum">Classifier (optional): off</summary>
     <p class="muted">An AI model you choose (any OpenAI-compatible API) labels each prompt malicious or benign. That lets the report score prompts that have no labels, and adds Attack Success Rate, Precision and more. Its key stays in this tab.</p>
     <div class="row">
       <label>Base URL <input id="judgeUrl" placeholder="https://api.openai.com/v1"></label>
       <label>API key <input id="judgeKey" type="password" autocomplete="off" placeholder="blank for local servers"></label>
       <label>Model <input id="judgeModel" placeholder="model name"></label>
-      <button id="judgeTest" type="button">Test judge</button>
+      <button id="judgeTest" type="button">Test classifier</button>
       <span id="judgeStatus" role="status"></span>
     </div>
   </details>
@@ -392,7 +392,7 @@ const ss = (() => { try { return sessionStorage; } catch { return null; } })();
 
 // Security check: credentials must be session-based (sessionStorage = this tab only, gone when it closes).
 // Any copy in localStorage or a cookie would outlive the session, so it is removed and reported.
-const CREDS = { key: "Lakera key", judgeKey: "judge key", hfToken: "HF token" }; // input id = storage name
+const CREDS = { key: "Lakera key", judgeKey: "classifier key", hfToken: "HF token" }; // input id = storage name
 function credentialCheck() {
   const issues = [];
   for (const [id, name] of Object.entries(CREDS)) {
@@ -408,7 +408,7 @@ function credentialCheck() {
   if (!ss) issues.push("sessionStorage unavailable: keys live in page memory only and are lost on reload");
   const st = $("credStatus");
   st.replaceChildren(icon(issues.length ? "alert" : "lock"), issues.length ? issues.join("; ") : "Keys stay in this tab");
-  st.title = issues.length ? "" : "Lakera key, judge key and HF token are kept in this tab's sessionStorage, cleared when the tab closes, sent only to the local backend per request, and never logged, saved or exported.";
+  st.title = issues.length ? "" : "Lakera key, classifier key and HF token are kept in this tab's sessionStorage, cleared when the tab closes, sent only to the local backend per request, and never logged, saved or exported.";
   st.className = issues.length ? "bad" : "";
   return issues;
 }
@@ -426,8 +426,8 @@ function judgeCfg() {
 function judgeText(j) {
   if (!j) return null;
   const line = el("div", "judgeline");
-  if (j.error) { line.textContent = "The judge couldn't answer: " + j.error; return line; }
-  line.append("Judge says: ", el("b", null, j.malicious ? "malicious" : j.sensitive_data ? "contains personal data" : "benign"),
+  if (j.error) { line.textContent = "The classifier couldn't answer: " + j.error; return line; }
+  line.append("Classifier says: ", el("b", null, j.malicious ? "malicious" : j.sensitive_data ? "contains personal data" : "benign"),
               j.reason ? ` — ${j.reason}` : "");
   return line;
 }
@@ -552,20 +552,20 @@ async function send(e) {
 
 async function testJudge() {
   const cfg = judgeCfg(), st = $("judgeStatus");
-  if (!cfg) { st.textContent = "Enter the judge's base URL and model first."; st.className = "bad"; return; }
+  if (!cfg) { st.textContent = "Enter the classifier's base URL and model first."; st.className = "bad"; return; }
   $("judgeTest").disabled = true; st.textContent = "Testing…"; st.className = "";
   try {
     const r = await post("/api/judge/test", cfg);
     if (r.ok) { st.textContent = r.malicious ? `Works (${Math.round(r.latency_ms)} ms): it called a test attack malicious, as expected.`
                                             : `It answered, but called an obvious attack benign. Try a stronger model.`; st.className = r.malicious ? "ok" : "bad"; }
-    else { st.textContent = "The judge didn't answer: " + r.error; st.className = "bad"; }
+    else { st.textContent = "The classifier didn't answer: " + r.error; st.className = "bad"; }
   } catch (err) { st.textContent = err.message; st.className = "bad"; }
   finally { $("judgeTest").disabled = false; }
 }
 
 function updateJudgeSum() {
   const c = judgeCfg();
-  $("judgeSum").textContent = "Judge model (optional): " + (c ? `on, ${c.model}` : "off");
+  $("judgeSum").textContent = "Classifier (optional): " + (c ? `on, ${c.model}` : "off");
 }
 
 function setConn(text, cls) { $("conn").textContent = text; $("conn").className = cls || ""; }
@@ -701,7 +701,7 @@ const PURPOSE_HELP = {
   "Attacks": "Jailbreaks and prompt injections. Lakera should flag them.",
   "Harmful content": "Toxic or dangerous requests. Lakera should flag them.",
   "Benign": "Everyday prompts. Lakera should let them through, so any flag is a false alarm.",
-  "Personal data": "Texts with personal data, for the Data Leakage (DLP) detectors. They have no labels: add a judge to score them. Built-in DLP covers 8 mostly-US data types.",
+  "Personal data": "Texts with personal data, for the Data Leakage (DLP) detectors. They have no labels: add a classifier to score them. Built-in DLP covers 8 mostly-US data types.",
   "Agent tool calls": "Advanced: AI-agent conversations with allowed and unauthorized tool calls. Needs a Lakera project with agent detectors.",
 };
 const presetBadge = p => p.type === "scenario" ? "labeled" : !p.label ? "no labels" : p.label.startsWith("=") ? "all " + p.label.slice(1) : "labeled";
@@ -852,7 +852,7 @@ async function build() {
       const t = $("builtText"); t.replaceChildren(icon("check"));
       const sp = el("span"); sp.append(el("b", null, `Test set ready: ${plural(r.cases.length, "prompt", "prompts")}`),
         ` from ${plural(new Set(r.cases.map(x => x.source)).size, "source", "sources")}: ${text}.`,
-        c.none ? " Prompts without a label count only as flagged or not, unless you add a judge model in step 2." : "");
+        c.none ? " Prompts without a label count only as flagged or not, unless you add a classifier in step 2." : "");
       t.append(sp);
     }
     for (const e of r.errors) $("buildErrors").append(el("div", null, e));
@@ -885,7 +885,7 @@ function renderRunReady() {
     const opt = $("endpoint").selectedOptions[0], region = opt ? `${opt.textContent}, ${opt.title}` : s.endpoint, j = judgeCfg();
     box.append(el("b", null, `${plural(n, "prompt", "prompts")} ready`),
       ` from ${plural(new Set(state.cases.map(c => c.source)).size, "source", "sources")}. Each one is sent to Lakera once (${region}, ${s.project_id ? "project " + s.project_id : "default policy"}, ${s.mode === "screen" ? "screening requests, logged in the Lakera portal" : "raw results, not logged in the portal"})` +
-      (j ? ` and to the judge (${j.model}).` : ", without a judge."));
+      (j ? ` and to the classifier (${j.model}).` : ", without a classifier."));
     if (!s.api_key) box.append(el("p", "err", "Enter your Lakera API key at the top first."));
   }
   runButtons(!!runAbort);
@@ -906,8 +906,8 @@ function renderRunStats() {
     stat("Slowest", lat.length ? Math.round(Math.max(...lat)) + " ms" : "–"),
     etaStat(total),
     stat("Parallel checks", state.run.concurrency == null ? "–" : state.run.concurrency + (state.run.throttled ? ` (slowed ${state.run.throttled}×)` : "")),
-    ...(state.run.meta?.judge_model ? [stat("Judge: malicious", ok.filter(r => r.judge?.malicious).length.toLocaleString()),
-                                       stat("Judge errors", ok.filter(r => r.judge?.error).length.toLocaleString())] : []));
+    ...(state.run.meta?.judge_model ? [stat("Classifier: malicious", ok.filter(r => r.judge?.malicious).length.toLocaleString()),
+                                       stat("Classifier errors", ok.filter(r => r.judge?.error).length.toLocaleString())] : []));
 }
 
 // Time left, from this segment's pace (a resumed run restarts the clock). Only while running.
@@ -1018,7 +1018,7 @@ async function startRun() {
   const n = state.cases.length;
   if (n > BIG && !confirm(`Check ${n.toLocaleString()} prompts with Lakera?\n\nThat's ${n.toLocaleString()} API calls ` +
       `(about ${(n * 0.3 / concurrency() / 3600).toFixed(1)} hours with ${concurrency()} parallel checks) and it uses your Lakera quota.` +
-      (judgeCfg() ? ` The judge model is also called ${n.toLocaleString()} times.` : ""))) return;
+      (judgeCfg() ? ` The classifier is also called ${n.toLocaleString()} times.` : ""))) return;
   if (state.run?.records.length) state.prevRun = state.run;  // offered as "Compare with previous test"
   state.opened = state.baseline = null;
   state.run = { meta: null, warmup: null, records: [], done: null, cases: state.cases.slice(), doneIdx: new Set(), at: new Map(),
